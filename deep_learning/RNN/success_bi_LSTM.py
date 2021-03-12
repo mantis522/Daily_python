@@ -76,7 +76,7 @@ class BiLSTMSentiment(nn.Module):
 
         # unpacked sequence
         output, output_length = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=False)
-
+        ## pad_packed_sequence에 대해서 : https://simonjisu.github.io/nlp/2018/07/05/packedsequence.html
         # hidden => (batch_size, hidden_size*num_direction)
         # only use hidden state of last layer
         if self.lstm.bidirectional:
@@ -163,7 +163,7 @@ def main():
     print(train_data.examples[0])
 
     train_data, eval_data = train_data.split(random_state = random.seed(RANDOM_SEED))
-
+    ## 데이터 split을 랜덤으로 해놨네...
     print('Number of train data {}'.format(len(train_data)))
     print('Number of val data {}'.format(len(eval_data)))
     print('Number of test data {}'.format(len(test_data)))

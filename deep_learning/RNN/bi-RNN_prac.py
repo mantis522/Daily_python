@@ -32,7 +32,7 @@ TEXT = data.Field(sequential=True,
                   lower=True,
                   batch_first=True)
 
-LABEL = data.Field(sequential=False,
+LABEL = data.LabelField(sequential=False,
                    use_vocab=False,
                    batch_first=False,
                    is_target=True)
