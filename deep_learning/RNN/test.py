@@ -1,12 +1,11 @@
 import os
-
 import random
 import torch
 import torch.nn  as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim import lr_scheduler
-
+from torchtext.data import TabularDataset
 from torchtext import data, datasets
 from torchtext.vocab import GloVe
 import spacy
@@ -34,6 +33,8 @@ torch.backends.cudnn.deterministic = True
 # TEXT = data.Field(tokenize='spacy', fix_length=1000)
 TEXT = data.Field(tokenize=str.split, include_lengths=True)
 LABEL = data.LabelField(sequential=False, dtype=torch.float32)
+
+
 
 class BiLSTMSentiment(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_size, output_size, num_layer, pad_index,
@@ -107,9 +108,9 @@ def train(model, data_loader, optimizer, criterion):
 
     pbar = tqdm(data_loader)
     for data in pbar:
-        text = data.text[0].to(device)
-        text_length = data.text[1]
-        label = data.label.to(device)
+        text = data.review[0].to(device)
+        text_length = data.review[1]
+        label = data.sentiment.to(device)
 
         pred = model(text, text_length)
         loss = criterion(pred, label.unsqueeze(dim=1))
@@ -138,9 +139,9 @@ def test(model, data_loader, criterion):
     with torch.no_grad():
         pbar = tqdm(data_loader)
         for data in pbar:
-            text = data.text[0].to(device)
-            text_length = data.text[1]
-            label = data.label.to(device)
+            text = data.review[0].to(device)
+            text_length = data.review[1]
+            label = data.sentiment.to(device)
             pred = model(text, text_length)
             loss = criterion(pred, label.unsqueeze(dim=1))
 
@@ -157,26 +158,22 @@ def test(model, data_loader, criterion):
 
 def main():
     # -----------------get train, val and test data--------------------
-    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL, root='../Dataset/IMDB')
-
-    print(train_data.fileds)
-    print(train_data.examples[0])
+    train_data, test_data = TabularDataset.splits(
+        path='D:/ruin/data/test/', train='train_data.csv', test='test_data.csv', format='csv',
+        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
     train_data, eval_data = train_data.split(random_state = random.seed(RANDOM_SEED))
-    ## 데이터 split을 랜덤으로 해놨네...
+
     print('Number of train data {}'.format(len(train_data)))
     print('Number of val data {}'.format(len(eval_data)))
     print('Number of test data {}'.format(len(test_data)))
 
-
-    # -------------------initial vocabulary with GLOVE model---------------------------
     TEXT.build_vocab(train_data,
                      max_size=MAX_VOCAB_SIZE,
                      vectors="glove.6B.100d",
                      min_freq=10)
-
     LABEL.build_vocab(train_data)
-    print('Unique token in Text vocabulary {}'.format(len(TEXT.vocab))) # 250002(<unk>, <pad>)
+    print('Unique token in Text vocabulary {}'.format(len(TEXT.vocab)))  # 250002(<unk>, <pad>)
     print(TEXT.vocab.itos)
     print('Unique token in LABEL vocabulary {}'.format(len(LABEL.vocab)))
     print(TEXT.vocab.itos)
@@ -186,15 +183,15 @@ def main():
 
     print('Done')
 
-
     # generate dataloader
     train_iter = data.BucketIterator(train_data, batch_size=BATCH_SIZE, device=device, shuffle=True)
     eval_iter, test_iter = data.BucketIterator.splits((eval_data, test_data), batch_size=BATCH_SIZE, device=device,
-                                              sort_within_batch=True)
+                                                      sort_key=lambda x: len(x.review),
+                                                      sort_within_batch=True)
 
     for batch_data in train_iter:
-        print(batch_data.text)  # text, text_length
-        print(batch_data.label) # label
+        print(batch_data.review)  # text, text_length
+        print(batch_data.sentiment)  # label
         break
 
     # construct model
@@ -208,11 +205,9 @@ def main():
     PAD_INDEX = TEXT.vocab.stoi[TEXT.pad_token]
     UNK_INDEX = TEXT.vocab.stoi[TEXT.unk_token]
 
-
     model = BiLSTMSentiment(vocab_size=VOCAB_SIZE, embedding_dim=EMBEDDING_DIM, hidden_size=HIDDEN_SIZE,
                             output_size=OUTPUT_SIZE, num_layer=NUM_LAYER, bidirectional=BIDIRECTIONAL,
                             dropout=DROPOUT, pad_index=PAD_INDEX)
-
 
     # load pretrained weight of embedding layer
     pretrained_embedding = TEXT.vocab.vectors
@@ -230,7 +225,7 @@ def main():
     scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
     model = model.to(device)
-    EPOCH = 10
+    EPOCH = 1
     MODEL_PATH = './output/bilstm_model.pth'
     BEST_MODEL_PATH = './output/bilstm_model_best.pth'
     best_eval_loss = float('inf')
@@ -264,9 +259,7 @@ def main():
             shutil.copy(MODEL_PATH, BEST_MODEL_PATH)
             best_eval_loss = eval_loss
 
-
     test_acc, test_loss = test(model, test_iter, criterion=criterion)
-    print('Eval => acc {:.3f}, loss {:4f}'.format(test_acc, test_loss))
-
+    print('Test Eval => acc {:.3f}, loss {:4f}'.format(test_acc, test_loss))
 if __name__ == "__main__":
     main()
