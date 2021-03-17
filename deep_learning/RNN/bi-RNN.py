@@ -12,8 +12,8 @@ import shutil
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 RANDOM_SEED = 2020
-MAX_VOCAB_SIZE = 25000
-BATCH_SIZE = 128
+MAX_VOCAB_SIZE = 25000  ## 상위 25k개 단어만 사전에 넣겠다는 의미.
+BATCH_SIZE = 128        ##
 
 torch.manual_seed(RANDOM_SEED)
 torch.backends.cudnn.deterministic = True
@@ -28,19 +28,21 @@ torch.backends.cudnn.deterministic = True
 # step 4: $ spacy link en_core_web_sm en
 
 # TEXT = data.Field(tokenize='spacy', fix_length=1000)
-TEXT = data.Field(tokenize=str.split, include_lengths=True)
+TEXT = data.Field(tokenize='spacy', include_lengths=True)
 LABEL = data.LabelField(sequential=False, dtype=torch.float32)
-
-
 
 class BiLSTMSentiment(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_size, output_size, num_layer, pad_index,
                  bidirectional=False, dropout=0.5):
         super(BiLSTMSentiment, self).__init__()
 
-        self.embedding = nn.Embedding(num_embeddings=vocab_size,
-                                      embedding_dim=embedding_dim,
+        self.embedding = nn.Embedding(num_embeddings=vocab_size, ## size of the dictionary of embeddings
+                                      embedding_dim=embedding_dim, ## the size of each embedding vector
                                       padding_idx=pad_index)
+        # num_embeddings : 임베딩을 할 단어들의 개수. 다시 말해 단어 집합의 크기입니다.
+        # embedding_dim : 임베딩 할 벡터의 차원입니다. 사용자가 정해주는 하이퍼파라미터입니다.
+        # padding_idx : 선택적으로 사용하는 인자입니다. 패딩을 위한 토큰의 인덱스를 알려줍니다.
+
         self.lstm = nn.LSTM(input_size=embedding_dim,
                             hidden_size=hidden_size,
                             num_layers=num_layer,
@@ -66,7 +68,7 @@ class BiLSTMSentiment(nn.Module):
         text_length = text_length.cpu()  # compatible torch=1.7.0
         # pack sequence
         packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_length, batch_first=False, enforce_sorted=False)
-
+        ## pad_packed_sequence에 대해서 : https://simonjisu.github.io/nlp/2018/07/05/packedsequence.html
         # lstm
         # h_n => (num_direction * num_layers, batch_size, hidden_size)
         # c_n => (num_direction * num_layers, batch_size, hidden_size)
@@ -74,7 +76,7 @@ class BiLSTMSentiment(nn.Module):
 
         # unpacked sequence
         output, output_length = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=False)
-        ## pad_packed_sequence에 대해서 : https://simonjisu.github.io/nlp/2018/07/05/packedsequence.html
+
         # hidden => (batch_size, hidden_size*num_direction)
         # only use hidden state of last layer
         if self.lstm.bidirectional:
@@ -90,11 +92,8 @@ class BiLSTMSentiment(nn.Module):
 
 
 def binary_accuracy(pred, target, threshold=0.5):
-
     preds = torch.sigmoid(pred) > threshold
-
     correct = (preds==target).float()
-
     return correct.mean()
 
 def train(model, data_loader, optimizer, criterion):
@@ -185,7 +184,8 @@ def main():
     eval_iter, test_iter = data.BucketIterator.splits((eval_data, test_data), batch_size=BATCH_SIZE, device=device,
                                                       sort_key=lambda x: len(x.review),
                                                       sort_within_batch=True)
-
+    ## https://stackoverflow.com/questions/58241313/understanding-typeerror-not-supported-between-instances-of-example-and-e
+    ## sort_key=lambda x: len(x.review) 추가에 대해선 위 링크에서 설명.
     for batch_data in train_iter:
         print(batch_data.review)  # text, text_length
         print(batch_data.sentiment)  # label
