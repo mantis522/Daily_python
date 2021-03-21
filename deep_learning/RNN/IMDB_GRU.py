@@ -27,7 +27,7 @@ print("cpu와 cuda 중 다음 기기로 학습함:", DEVICE)
 # 필드 정의
 TEXT = data.Field(sequential=True,
                   use_vocab=True,
-                  tokenize=str.split,
+                  tokenize='spacy',
                   lower=True,
                   batch_first=True,
                   fix_length=200)
