@@ -11,7 +11,7 @@ from torch.optim import lr_scheduler
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 
-## https://github.com/yjfiejd/2019xuexi/blob/cc4ab107568eb02e65767b405133d1a720fc73cf/Pytorch_new/%E7%AC%AC%E5%9B%9B%E8%AF%BE.py 참조
+## https://github.com/NicholasZXT/DataAnalysis/blob/5c4e784b9daeca8b0be671297de7798752369c43/ML-Action/pytorch_practice.py 참조
 
 # 하이퍼파라미터
 RANDOM_SEED = 2020
