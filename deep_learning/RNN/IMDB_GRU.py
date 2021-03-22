@@ -27,7 +27,7 @@ print("cpu와 cuda 중 다음 기기로 학습함:", DEVICE)
 # 필드 정의
 TEXT = data.Field(sequential=True,
                   use_vocab=True,
-                  tokenize='spacy',
+                  tokenize=str.split,
                   lower=True,
                   batch_first=True,
                   fix_length=200)
@@ -37,40 +37,12 @@ LABEL = data.Field(sequential=False,
                    batch_first=False,
                    is_target=True)
 
-imdb_dataset = pd.read_csv(r"D:\ruin\data\IMDB Dataset.csv")
-
-def preprocessing(dataset):
-    txt_list = []
-    label_list = []
-    for a in range(len(dataset)):
-        txt = imdb_dataset['review'][a]
-        label = imdb_dataset['sentiment'][a]
-        if label == 'positive':
-            label = 1
-        elif label == 'negative':
-            label = 0
-        txt = re.sub(r'\<br />', '', txt)
-        txt_list.append(txt)
-        label_list.append(label)
-
-    df = pd.DataFrame([x for x in zip(txt_list, label_list)])
-    df.columns = ['text', 'label']
-    return df
-
-imdb_dataset = preprocessing(imdb_dataset)
-
-X_train, X_test = train_test_split(imdb_dataset, test_size=0.2, random_state=123)
-X_train.to_csv(r"D:\ruin\data\test\train_data.csv", index=False)
-X_test.to_csv(r"D:\ruin\data\test\test_data.csv", index=False)
-
 train_data, test_data = TabularDataset.splits(
-        path='D:/ruin/data/test/', train='train_data.csv', test='test_data.csv', format='csv',
+        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
         fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
 print('훈련 샘플의 개수 : {}'.format(len(train_data)))
 print('테스트 샘플의 개수 : {}'.format(len(test_data)))
-
-print(vars(train_data[0]))
 
 TEXT.build_vocab(train_data, min_freq=5) # 단어 집합 생성
 LABEL.build_vocab(train_data)

@@ -28,7 +28,7 @@ torch.backends.cudnn.deterministic = True
 # step 4: $ spacy link en_core_web_sm en
 
 # TEXT = data.Field(tokenize='spacy', fix_length=1000)
-TEXT = data.Field(tokenize='spacy', include_lengths=True)
+TEXT = data.Field(tokenize=str.split, include_lengths=True)
 LABEL = data.LabelField(sequential=False, dtype=torch.float32)
 
 class BiLSTMSentiment(nn.Module):
@@ -105,6 +105,7 @@ def train(model, data_loader, optimizer, criterion):
     pbar = tqdm(data_loader)
     for data in pbar:
         text = data.review[0].to(device)
+        print(text.size())
         text_length = data.review[1]
         label = data.sentiment.to(device)
 
@@ -155,7 +156,7 @@ def test(model, data_loader, criterion):
 def main():
     # -----------------get train, val and test data--------------------
     train_data, test_data = TabularDataset.splits(
-        path='D:/ruin/data/test/', train='train_data.csv', test='test_data.csv', format='csv',
+        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
         fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
     train_data, eval_data = train_data.split(random_state = random.seed(RANDOM_SEED))
