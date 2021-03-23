@@ -29,8 +29,7 @@ TEXT = data.Field(sequential=True,
                   use_vocab=True,
                   tokenize=str.split,
                   lower=True,
-                  batch_first=True,
-                  fix_length=200)
+                  batch_first=True)
 
 LABEL = data.Field(sequential=False,
                    use_vocab=False,
