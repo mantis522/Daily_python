@@ -105,7 +105,6 @@ def train(model, data_loader, optimizer, criterion):
     pbar = tqdm(data_loader)
     for data in pbar:
         text = data.review[0].to(device)
-        print(text.size())
         text_length = data.review[1]
         label = data.sentiment.to(device)
 
