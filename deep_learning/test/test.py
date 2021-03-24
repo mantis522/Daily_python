@@ -1,134 +1,173 @@
 import torch
-from torchtext import data
-from torchtext import datasets
+from torchtext import data, datasets
 import random
-import numpy as np
+import torch.nn as nn
+import torch.optim as optim
+import time
+# import spacy
+import json
+from tqdm import tqdm
+import dill
 
+t = time.time()
 SEED = 1234
-
-random.seed(SEED)
-np.random.seed(SEED)
 torch.manual_seed(SEED)
-torch.backends.cudnn.deterministic = True
+# torch.backends.cudnn.deterministic = True
+# nlp = spacy.load('en_core_web_sm')
+first_time = 1
+file_type = ''
 
-TEXT = data.Field(tokenize = str.split,
-                  batch_first = True)
-LABEL = data.LabelField(dtype = torch.float)
 
-train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
+def tokenize(s):
+    return s.split(' ')
 
-print(train_data)
-train_data, valid_data = train_data.split(random_state = random.seed(SEED))
 
-MAX_VOCAB_SIZE = 25_000
+# todo add att
+class RNN(nn.Module):
+    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim):
+        super().__init__()
 
-TEXT.build_vocab(train_data,
-                 max_size = MAX_VOCAB_SIZE,
-                 vectors = "glove.6B.100d",
-                 unk_init = torch.Tensor.normal_)
+        self.embedding = nn.Embedding(input_dim, embedding_dim)
+        self.rnn = nn.GRU(embedding_dim, hidden_dim)
+        self.fc = nn.Linear(hidden_dim, output_dim)
+        self.use_att = True
+        self.att = Attention(hidden_dim)
 
+    def forward(self, text):
+        # text = [sent len, batch size]
+        embedded = self.embedding(text)
+
+        # embedded = [sent len, batch size, emb dim]
+        output, hidden = self.rnn(embedded)
+
+        # output = [sent len, batch size, hid dim]
+        # hidden = [1, batch size, hid dim]
+
+        if self.use_att:
+            h_t = hidden.view(text.shape[1], -1)
+            hidden = self.att(output, h_t)
+            pred = self.fc(hidden.squeeze(0)).view(-1, 1)
+        else:
+            assert torch.equal(output[-1, :, :], hidden.squeeze(0))
+            pred = self.fc(hidden.squeeze(0))
+
+        return pred
+
+
+class Attention(nn.Module):
+    def __init__(self, input_dim, hidden_dim=100):
+        super().__init__()
+        self.w1 = nn.Linear(input_dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(input_dim, hidden_dim)
+        self.V = nn.Linear(hidden_dim, 1)
+
+    def forward(self, input, z):
+        w1h = self.w1(input).transpose(0, 1)
+        w2h = self.w2(z).unsqueeze(1)
+        u_score = torch.tanh(w1h + w2h)
+        u_score = self.V(u_score)
+        att = torch.softmax(u_score, dim=1).transpose(1, 2)
+
+        return torch.bmm(att, input.transpose(0, 1)).unsqueeze(1)
+
+# ref: https://github.com/bentrevett/pytorch-sentiment-analysis/blob/master/1%20-%20Simple%20Sentiment%20Analysis.ipynb
+if first_time:
+    # TEXT = data.Field(tokenize='spacy')
+    # TEXT = data.Field(tokenize=nlp)
+    TEXT = data.Field(tokenize=tokenize)
+    LABEL = data.LabelField(dtype=torch.float)
+    train_data, test_data = datasets.IMDB.splits(TEXT, LABEL)
+
+    print(time.time() - t)
+
+    if file_type == 'json':
+        train_examples = [vars(t) for t in train_data]
+        test_examples = [vars(t) for t in test_data]
+
+        with open('.data/train.json', 'w+') as f:
+            for example in train_examples:
+                json.dump(example, f)
+                f.write('\n')
+
+        with open('.data/test.json', 'w+') as f:
+            for example in test_examples:
+                json.dump(example, f)
+                f.write('\n')
+    # else:
+    #     torch.save(train_data, ".data/train.Field", pickle_module=dill)
+        # with open(".data/train.Field", "wb+")as f:
+        #     dill.dump(train_data, f)
+        # with open(".data/test.Field", "wb+")as f:
+        #     dill.dump(test_data, f)
+else:
+    TEXT = data.Field()
+    LABEL = data.LabelField()
+
+    fields = {'text': ('text', TEXT), 'label': ('label', LABEL)}
+
+    if file_type =='json':
+        train_data, test_data = data.TabularDataset.splits(
+            path='.data',
+            train='train.json',
+            test='test.json',
+            format='json',
+            fields=fields
+        )
+    else:
+        with open(".data/train.Field", "rb")as f:
+            train_data = dill.load(f)
+        with open(".data/test.Field", "rb")as f:
+            test_data = dill.load(f)
+
+print(f'Number of training examples: {len(train_data)}')
+print(f'Number of testing examples: {len(test_data)}')
+print(vars(train_data.examples[0]))
+
+train_data, valid_data = train_data.split(random_state=random.seed(SEED))
+
+print(f'Number of training examples: {len(train_data)}')
+print(f'Number of validation examples: {len(valid_data)}')
+print(f'Number of testing examples: {len(test_data)}')
+
+MAX_VOCAB_SIZE = 25000
+
+TEXT.build_vocab(train_data, max_size=MAX_VOCAB_SIZE)
 LABEL.build_vocab(train_data)
+
+print(f"Unique tokens in TEXT vocabulary: {len(TEXT.vocab)}")
+print(f"Unique tokens in LABEL vocabulary: {len(LABEL.vocab)}")
+print(TEXT.vocab.freqs.most_common(20))
+print(TEXT.vocab.itos[:10])
+print(TEXT.vocab.itos[:10])
 
 BATCH_SIZE = 64
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
 train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
     (train_data, valid_data, test_data),
-    batch_size = BATCH_SIZE,
-    device = device)
-
-
-
-import torch.nn as nn
-import torch.nn.functional as F
-
-
-class CNN(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, n_filters, filter_sizes, output_dim,
-                 dropout, pad_idx):
-        super().__init__()
-
-        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
-
-        self.conv_0 = nn.Conv2d(in_channels=1,
-                                out_channels=n_filters,
-                                kernel_size=(filter_sizes[0], embedding_dim))
-
-        self.conv_1 = nn.Conv2d(in_channels=1,
-                                out_channels=n_filters,
-                                kernel_size=(filter_sizes[1], embedding_dim))
-
-        self.conv_2 = nn.Conv2d(in_channels=1,
-                                out_channels=n_filters,
-                                kernel_size=(filter_sizes[2], embedding_dim))
-
-        self.fc = nn.Linear(len(filter_sizes) * n_filters, output_dim)
-
-        self.dropout = nn.Dropout(dropout)
-
-    def forward(self, text):
-        # text = [batch size, sent len]
-
-        embedded = self.embedding(text)
-
-        # embedded = [batch size, sent len, emb dim]
-
-        embedded = embedded.unsqueeze(1)
-
-        # embedded = [batch size, 1, sent len, emb dim]
-
-        conved_0 = F.relu(self.conv_0(embedded).squeeze(3))
-        conved_1 = F.relu(self.conv_1(embedded).squeeze(3))
-        conved_2 = F.relu(self.conv_2(embedded).squeeze(3))
-
-        # conved_n = [batch size, n_filters, sent len - filter_sizes[n] + 1]
-
-        pooled_0 = F.max_pool1d(conved_0, conved_0.shape[2]).squeeze(2)
-        pooled_1 = F.max_pool1d(conved_1, conved_1.shape[2]).squeeze(2)
-        pooled_2 = F.max_pool1d(conved_2, conved_2.shape[2]).squeeze(2)
-
-        # pooled_n = [batch size, n_filters]
-
-        cat = self.dropout(torch.cat((pooled_0, pooled_1, pooled_2), dim=1))
-
-        # cat = [batch size, n_filters * len(filter_sizes)]
-
-        return self.fc(cat)
+    batch_size=BATCH_SIZE,
+    device=device)
 
 INPUT_DIM = len(TEXT.vocab)
 EMBEDDING_DIM = 100
-N_FILTERS = 100
-FILTER_SIZES = [3,4,5]
+HIDDEN_DIM = 256
 OUTPUT_DIM = 1
-DROPOUT = 0.5
-PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
 
-model = CNN(INPUT_DIM, EMBEDDING_DIM, N_FILTERS, FILTER_SIZES, OUTPUT_DIM, DROPOUT, PAD_IDX)
+model = RNN(INPUT_DIM, EMBEDDING_DIM, HIDDEN_DIM, OUTPUT_DIM)
+
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
+
 print(f'The model has {count_parameters(model):,} trainable parameters')
 
-pretrained_embeddings = TEXT.vocab.vectors
-
-model.embedding.weight.data.copy_(pretrained_embeddings)
-
-UNK_IDX = TEXT.vocab.stoi[TEXT.unk_token]
-
-model.embedding.weight.data[UNK_IDX] = torch.zeros(EMBEDDING_DIM)
-model.embedding.weight.data[PAD_IDX] = torch.zeros(EMBEDDING_DIM)
-
-import torch.optim as optim
-
-optimizer = optim.Adam(model.parameters())
-
+optimizer = optim.SGD(model.parameters(), lr=1e-3)
 criterion = nn.BCEWithLogitsLoss()
-
 model = model.to(device)
 criterion = criterion.to(device)
+
 
 def binary_accuracy(preds, y):
     """
@@ -148,7 +187,7 @@ def train(model, iterator, optimizer, criterion):
 
     model.train()
 
-    for batch in iterator:
+    for batch in tqdm(iterator):
         optimizer.zero_grad()
 
         predictions = model(batch.text).squeeze(1)
@@ -186,7 +225,6 @@ def evaluate(model, iterator, criterion):
 
     return epoch_loss / len(iterator), epoch_acc / len(iterator)
 
-import time
 
 def epoch_time(start_time, end_time):
     elapsed_time = end_time - start_time
@@ -195,8 +233,9 @@ def epoch_time(start_time, end_time):
     return elapsed_mins, elapsed_secs
 
 
-best_valid_loss = float('inf')
 N_EPOCHS = 5
+
+best_valid_loss = float('inf')
 
 for epoch in range(N_EPOCHS):
 
@@ -211,7 +250,15 @@ for epoch in range(N_EPOCHS):
 
     if valid_loss < best_valid_loss:
         best_valid_loss = valid_loss
+        torch.save(model.state_dict(), 'tut1-model.pt')
 
     print(f'Epoch: {epoch + 1:02} | Epoch Time: {epoch_mins}m {epoch_secs}s')
     print(f'\tTrain Loss: {train_loss:.3f} | Train Acc: {train_acc * 100:.2f}%')
     print(f'\t Val. Loss: {valid_loss:.3f} |  Val. Acc: {valid_acc * 100:.2f}%')
+
+# testing
+model.load_state_dict(torch.load('tut1-model.pt'))
+
+test_loss, test_acc = evaluate(model, test_iterator, criterion)
+
+print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc*100:.2f}%')
