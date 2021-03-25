@@ -1,72 +1,96 @@
+import os
 import torch
-from torchtext import data
-import random
-from torchtext.data import TabularDataset
 import torch.nn as nn
 import torch.nn.functional as F
-from tqdm import tqdm
+from torchtext import data
+import random
+import pandas as pd
+import re
+from torchtext.data import TabularDataset
+from sklearn.model_selection import train_test_split
 import time
+from tqdm import tqdm
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+## RuntimeError: Input, output and indices must be on the current device 발생
 
-SEED = 1234
+SEED = 5
+random.seed(SEED)
+torch.manual_seed(SEED)
 
-TEXT = data.Field(tokenize = str.split)
-LABEL = data.LabelField(dtype = torch.float)
+# 하이퍼파라미터
+BATCH_SIZE = 64
+lr = 0.001
+EPOCHS = 10
+
+USE_CUDA = torch.cuda.is_available()
+DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
+print("cpu와 cuda 중 다음 기기로 학습함:", DEVICE)
+
+ # torchtext.data 임포트
+
+# 필드 정의
+TEXT = data.Field(sequential=True,
+                  use_vocab=True,
+                  tokenize=str.split,
+                  lower=True,
+                  batch_first=False)
+
+LABEL = data.Field(sequential=False,
+                   use_vocab=False,
+                   batch_first=False,
+                   is_target=True)
 
 train_data, test_data = TabularDataset.splits(
-            path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
-            fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
+        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
+        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
-train_data, valid_data = train_data.split(random_state=random.seed(SEED))
+print('훈련 샘플의 개수 : {}'.format(len(train_data)))
+print('테스트 샘플의 개수 : {}'.format(len(test_data)))
 
-print('Number of train data {}'.format(len(train_data)))
-print('Number of val data {}'.format(len(valid_data)))
-print('Number of test data {}'.format(len(test_data)))
-
-MAX_VOCAB_SIZE = 25_000
-
-TEXT.build_vocab(train_data,
-                     max_size = MAX_VOCAB_SIZE,
-                     vectors = 'glove.6B.100d',
-                     unk_init = torch.Tensor.normal_)
+TEXT.build_vocab(train_data, min_freq=5) # 단어 집합 생성
 LABEL.build_vocab(train_data)
 
-BATCH_SIZE = 64
+n_classes = 1
 
-train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
-        (train_data, valid_data, test_data),
-        batch_size = BATCH_SIZE, sort_key=lambda x: len(x.review),
-        device = device)
+vocab_size = len(TEXT.vocab)
 
-class RNN(nn.Module):
-    def __init__(self, input_dim, embedding_dim, hidden_dim, output_dim, dropout=0.5):
-        super().__init__()
+train_data, val_data = train_data.split(split_ratio=0.8)
 
-        self.embedding = nn.Embedding(input_dim, embedding_dim)
-        self.rnn = nn.GRU(embedding_dim, hidden_dim)
-        self.fc = nn.Linear(hidden_dim, output_dim)
+train_iter, val_iter, test_iter = data.BucketIterator.splits(
+        (train_data, val_data, test_data), sort=False,batch_size=BATCH_SIZE,
+        shuffle=True, repeat=False)
+
+
+class GRU(nn.Module):
+    def __init__(self, n_layers, hidden_dim, n_vocab, embed_dim, n_classes, dropout_p=0.2):
+        super(GRU, self).__init__()
+        self.n_layers = n_layers
+        self.hidden_dim = hidden_dim
+
+        self.embed = nn.Embedding(n_vocab, embed_dim)
+        self.dropout = nn.Dropout(dropout_p)
+        self.gru = nn.GRU(embed_dim, self.hidden_dim,
+                          num_layers=self.n_layers,
+                          batch_first=True)
         self.use_att = True
         self.att = Attention(hidden_dim)
-        self.dropout = nn.Dropout(p=dropout)
+        self.out = nn.Linear(self.hidden_dim, n_classes)
 
-    def forward(self, text):
-        # text = [sent len, batch size]
-        embedded = self.embedding(text)
-
-        # embedded = [sent len, batch size, emb dim]
-        output, hidden = self.rnn(embedded)
-
+    def forward(self, x):
+        x = self.embed(x)
+        h_0 = torch.zeros(self.n_layers, x.size(0), self.hidden_dim)  # 첫번째 히든 스테이트를 0벡터로 초기화
+        # h_0 = self._init_state(batch_size=x.size(0)) # 첫번째 히든 스테이트를 0벡터로 초기화
+        output, hidden = self.gru(x, h_0)
         # output = [sent len, batch size, hid dim]
         # hidden = [1, batch size, hid dim]
 
-        h_t = hidden.view(text.shape[1], -1)
-        # h_t = [batch size, hidden_dim]
+        h_t = output[-1, :, :]  # (배치 크기, 은닉 상태의 크기(입력벡터 차원수))의 텐서로 크기가 변경됨. 즉, 마지막 time-step의 은닉 상태만 가져온다.
+        ## [:, -1, :]는 첫번째는 미니배치 크기, 두번째는 마지막 은닉상태, 세번째는 모든 hidden_dim을 의미하는 것
         hidden = self.att(output, h_t)
         hidden = self.dropout(hidden)
-        pred = self.fc(hidden).view(-1, 1)
+        logit = self.out(hidden)  # (배치 크기, 은닉 상태의 크기) -> (배치 크기, 출력층의 크기)
+        return logit
 
-        return pred
 
 class Attention(nn.Module):
     def __init__(self, input_dim, hidden_dim=100):
@@ -87,17 +111,9 @@ class Attention(nn.Module):
 
         return torch.bmm(att, input.transpose(0, 1)).unsqueeze(1)
 
-INPUT_DIM = len(TEXT.vocab)
-EMBEDDING_DIM = 100
-HIDDEN_DIM = 256
-OUTPUT_DIM = 1
-
-model = RNN(INPUT_DIM, EMBEDDING_DIM, HIDDEN_DIM, OUTPUT_DIM, 0.5)
-
-optimizer = torch.optim.SGD(model.parameters(), lr=1e-3)
+model = GRU(1, 256, vocab_size, 128, n_classes, 0.5).to(DEVICE)
+optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 criterion = nn.BCEWithLogitsLoss()
-model = model.to(device)
-criterion = criterion.to(device)
 
 def binary_accuracy(preds, y):
     """
@@ -171,8 +187,8 @@ for epoch in range(N_EPOCHS):
 
     start_time = time.time()
 
-    train_loss, train_acc = train(model, train_iterator, optimizer, criterion)
-    valid_loss, valid_acc = evaluate(model, valid_iterator, criterion)
+    train_loss, train_acc = train(model, train_iter, optimizer, criterion)
+    valid_loss, valid_acc = evaluate(model, val_iter, criterion)
 
     end_time = time.time()
 
@@ -189,6 +205,6 @@ for epoch in range(N_EPOCHS):
 # testing
 model.load_state_dict(torch.load('tut1-model.pt'))
 
-test_loss, test_acc = evaluate(model, test_iterator, criterion)
+test_loss, test_acc = evaluate(model, test_iter, criterion)
 
 print(f'Test Loss: {test_loss:.3f} | Test Acc: {test_acc*100:.2f}%')

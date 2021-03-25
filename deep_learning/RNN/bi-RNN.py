@@ -73,9 +73,9 @@ class BiLSTMSentiment(nn.Module):
         # h_n => (num_direction * num_layers, batch_size, hidden_size)
         # c_n => (num_direction * num_layers, batch_size, hidden_size)
         packed_output, (h_n, c_n) = self.lstm(packed_embedded)
-
         # unpacked sequence
         output, output_length = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=False)
+        # output => (sent_len, batch_size, hidden_dim * num_direction)
 
         # hidden => (batch_size, hidden_size*num_direction)
         # only use hidden state of last layer

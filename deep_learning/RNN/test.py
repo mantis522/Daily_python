@@ -13,23 +13,35 @@ device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 RANDOM_SEED = 2020
 MAX_VOCAB_SIZE = 25000  ## 상위 25k개 단어만 사전에 넣겠다는 의미.
-BATCH_SIZE = 128        ##
+BATCH_SIZE = 128
+SEED = 1234
 
 torch.manual_seed(RANDOM_SEED)
 torch.backends.cudnn.deterministic = True
 
-# define datatype
-# method 1
-# python -m spacy download en
-# method 2
-# step 1: manual download from https://github-production-release-asset-2e65be.s3.amazonaws.com/84940268/69ded28e-c3ef-11e7-94dc-d5b03d9597d8?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Credential=AKIAIWNJYAX4CSVEH53A%2F20201214%2Fus-east-1%2Fs3%2Faws4_request&X-Amz-Date=20201214T064457Z&X-Amz-Expires=300&X-Amz-Signature=631b41e8491a84dfb7c492f336d728f116a04f677c33cf709dd719d5cf4c126f&X-Amz-SignedHeaders=host&actor_id=26615837&key_id=0&repo_id=84940268&response-content-disposition=attachment%3B%20filename%3Den_core_web_sm-2.0.0.tar.gz&response-content-type=application%2Foctet-stream
-# step 2: remove to /home/alex/anaconda3/envs/pytorch/lib/python3.6/site-packages/spacy/data
-# step 3: $ pip install en_core_web_sm-2.0.0.tar.gz
-# step 4: $ spacy link en_core_web_sm en
-
-# TEXT = data.Field(tokenize='spacy', fix_length=1000)
 TEXT = data.Field(tokenize=str.split, include_lengths=True)
 LABEL = data.LabelField(sequential=False, dtype=torch.float32)
+
+train_data, test_data = TabularDataset.splits(
+            path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
+            fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
+
+train_data, valid_data = train_data.split(random_state=random.seed(SEED))
+
+print('Number of train data {}'.format(len(train_data)))
+print('Number of val data {}'.format(len(valid_data)))
+print('Number of test data {}'.format(len(test_data)))
+
+TEXT.build_vocab(train_data,
+                     max_size = MAX_VOCAB_SIZE,
+                     vectors = 'glove.6B.100d',
+                     unk_init = torch.Tensor.normal_)
+LABEL.build_vocab(train_data)
+
+train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
+        (train_data, valid_data, test_data),
+        batch_size = BATCH_SIZE, sort_key=lambda x: len(x.review),
+        device = device)
 
 class BiLSTMSentiment(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_size, output_size, num_layer, pad_index,
@@ -49,10 +61,9 @@ class BiLSTMSentiment(nn.Module):
                             bidirectional=bidirectional,
                             dropout=dropout)
 
-        if bidirectional:
-            self.fc = nn.Linear(hidden_size * 2, output_size)
-        else:
-            self.fc = nn.Linear(hidden_size, output_size)
+        self.fc = nn.Linear(hidden_size * 2, output_size)
+        self.use_att = True
+        self.att = Attention(hidden_size)
 
         self.dropout = nn.Dropout(p=dropout)
 
@@ -79,17 +90,31 @@ class BiLSTMSentiment(nn.Module):
 
         # hidden => (batch_size, hidden_size*num_direction)
         # only use hidden state of last layer
-        if self.lstm.bidirectional:
-            hidden = torch.cat((h_n[-2, :, :], h_n[-1, :, :]), dim=1)
-
-        else:
-            hidden = h_n[-1:, :, :]
+        hidden = torch.cat((h_n[-2, :, :], h_n[-1, :, :]), dim=1)
+        hidden = self.att(output, hidden)
 
         hidden = self.dropout(hidden)
 
         out = self.fc(hidden)
-        return out
+        return (out)
 
+class Attention(nn.Module):
+    def __init__(self, input_dim, hidden_dim=64):
+        super().__init__()
+        self.w1 = nn.Linear(input_dim, hidden_dim, bias=False)
+        self.w2 = nn.Linear(input_dim, hidden_dim)
+        self.V = nn.Linear(hidden_dim, 1)
+
+    def forward(self, input, z):
+        w1h = self.w1(input).transpose(0, 1)
+        # 위의 output과 동일한 크기
+        w2h = self.w2(z).unsqueeze(1)
+        # 위의 hidden과 동일한 크기
+        u_score = torch.tanh(w1h + w2h)
+        u_score = self.V(u_score)
+        att = torch.softmax(u_score, dim=1).transpose(1, 2)
+
+        return torch.bmm(att, input.transpose(0, 1)).unsqueeze(1)
 
 def binary_accuracy(pred, target, threshold=0.5):
     preds = torch.sigmoid(pred) > threshold
@@ -105,9 +130,7 @@ def train(model, data_loader, optimizer, criterion):
     pbar = tqdm(data_loader)
     for data in pbar:
         text = data.review[0].to(device)
-        print(text)
         text_length = data.review[1]
-        print(text_length)
         label = data.sentiment.to(device)
 
         pred = model(text, text_length)
@@ -153,149 +176,64 @@ def test(model, data_loader, criterion):
 
     return sum(epoch_acc) / len(data_loader), sum(epoch_loss) / len(data_loader)
 
-def load_data(batch_size):
-    TEXT = data.Field(sequential=True,
-                      use_vocab=True,
-                      tokenize=str.split,
-                      lower=True,
-                      batch_first=True)
-
-    LABEL = data.Field(sequential=False,
-                       use_vocab=False,
-                       batch_first=False,
-                       is_target=True)
-
-    train_data, test_data = TabularDataset.splits(
-        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
-        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
-
-    TEXT.build_vocab(train_data, vectors="glove.6B.100d", min_freq=5)  # 단어 집합 생성
-    LABEL.build_vocab(train_data)
-    vocab_size = len(TEXT.vocab)
-
-    train_data, val_data = train_data.split(split_ratio=0.8)
-
-    train_iter, val_iter, test_iter = data.BucketIterator.splits(
-        (train_data, val_data, test_data), sort=False, batch_size=batch_size,
-        shuffle=True, repeat=False)
-
-    PAD_INDEX = TEXT.vocab.stoi[TEXT.pad_token]
-    UNK_INDEX = TEXT.vocab.stoi[TEXT.unk_token]
-    pretrained_embedding = TEXT.vocab.vectors
-
-    return train_iter, val_iter, test_iter, vocab_size, PAD_INDEX, UNK_INDEX, pretrained_embedding
-
-train_iter, val_iter, test_iter, vocab_size, PAD_INDEX, UNK_INDEX, pretrained_embedding = load_data(64)
-
-# VOCAB_SIZE = len(TEXT.vocab)
+VOCAB_SIZE = len(TEXT.vocab)
 HIDDEN_SIZE = 256
 OUTPUT_SIZE = 1
 NUM_LAYER = 2
 BIDIRECTIONAL = True
 DROPOUT = 0.5
 EMBEDDING_DIM = 100
+PAD_INDEX = TEXT.vocab.stoi[TEXT.pad_token]
+UNK_INDEX = TEXT.vocab.stoi[TEXT.unk_token]
 
-model = BiLSTMSentiment(vocab_size=vocab_size, embedding_dim=EMBEDDING_DIM, hidden_size=HIDDEN_SIZE,
+model = BiLSTMSentiment(vocab_size=VOCAB_SIZE, embedding_dim=EMBEDDING_DIM, hidden_size=HIDDEN_SIZE,
                         output_size=OUTPUT_SIZE, num_layer=NUM_LAYER, bidirectional=BIDIRECTIONAL,
                         dropout=DROPOUT, pad_index=PAD_INDEX)
 
-optimizer = optim.SGD(model.parameters(), lr=0.001, weight_decay=1e-4)
+pretrained_embedding = TEXT.vocab.vectors
+pretrained_embedding[PAD_INDEX] = 0
+pretrained_embedding[UNK_INDEX] = 0
+
+model.embedding.weight.data.copy_(pretrained_embedding)
+
+    # optimizer
+optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
     # criterion
 criterion = nn.BCEWithLogitsLoss()
 scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
 model = model.to(device)
 EPOCH = 1
-model.embedding.weight.data.copy_(pretrained_embedding)
-
+# MODEL_PATH = './output/bilstm_model.pth'
+# BEST_MODEL_PATH = './output/bilstm_model_best.pth'
 best_eval_loss = float('inf')
 
 for epoch in range(EPOCH):
     print('{}/{}'.format(epoch, EPOCH))
-    train_acc, train_loss = train(model, train_iter, optimizer=optimizer, criterion=criterion)
-    eval_acc, eval_loss = test(model, val_iter, criterion=criterion)
+    train_acc, train_loss = train(model, train_iterator, optimizer=optimizer, criterion=criterion)
+    eval_acc, eval_loss = test(model, valid_iterator, criterion=criterion)
 
     print('Train => acc {:.3f}, loss {:4f}'.format(train_acc, train_loss))
     print('Eval => acc {:.3f}, loss {:4f}'.format(eval_acc, eval_loss))
     scheduler.step()
 
-# train_data, test_data = TabularDataset.splits(
-#         path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
-#         fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
-#
-# train_data, eval_data = train_data.split(random_state = random.seed(RANDOM_SEED))
-#
-# TEXT.build_vocab(train_data,
-#                      max_size=MAX_VOCAB_SIZE,
-#                      vectors="glove.6B.100d",
-#                      min_freq=10)
-#
-# LABEL.build_vocab(train_data)
-#
-# print('Done')
-#
-# train_iter = data.BucketIterator(train_data, batch_size=BATCH_SIZE, device=device, shuffle=True)
-# eval_iter, test_iter = data.BucketIterator.splits((eval_data, test_data), batch_size=BATCH_SIZE, device=device,
-#                                                       sort_key=lambda x: len(x.review),
-#                                                       sort_within_batch=True)
-#
-# VOCAB_SIZE = len(TEXT.vocab)
-# HIDDEN_SIZE = 256
-# OUTPUT_SIZE = 1
-# NUM_LAYER = 2
-# BIDIRECTIONAL = True
-# DROPOUT = 0.5
-# EMBEDDING_DIM = 100
-# PAD_INDEX = TEXT.vocab.stoi[TEXT.pad_token]
-# UNK_INDEX = TEXT.vocab.stoi[TEXT.unk_token]
-#
-# model = BiLSTMSentiment(vocab_size=VOCAB_SIZE, embedding_dim=EMBEDDING_DIM, hidden_size=HIDDEN_SIZE,
-#                             output_size=OUTPUT_SIZE, num_layer=NUM_LAYER, bidirectional=BIDIRECTIONAL,
-#                             dropout=DROPOUT, pad_index=PAD_INDEX)
-#
-# pretrained_embedding = TEXT.vocab.vectors
-# pretrained_embedding[PAD_INDEX] = 0
-# pretrained_embedding[UNK_INDEX] = 0
-#
-# model.embedding.weight.data.copy_(pretrained_embedding)
-#
-#     # optimizer
-# optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
-#     # criterion
-# criterion = nn.BCEWithLogitsLoss()
-# scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
-#
-# model = model.to(device)
-# EPOCH = 1
-#
-# best_eval_loss = float('inf')
-# for epoch in range(EPOCH):
-#     print('{}/{}'.format(epoch, EPOCH))
-#     train_acc, train_loss = train(model, train_iter, optimizer=optimizer, criterion=criterion)
-#     eval_acc, eval_loss = test(model, eval_iter, criterion=criterion)
-#
-#     print('Train => acc {:.3f}, loss {:4f}'.format(train_acc, train_loss))
-#     print('Eval => acc {:.3f}, loss {:4f}'.format(eval_acc, eval_loss))
-#     scheduler.step()
-#
-#         # save model
-#     state = {
-#             'vocab_size': VOCAB_SIZE,
-#             'embedding_dim': EMBEDDING_DIM,
-#             'hidden_size': HIDDEN_SIZE,
-#             'output_size': OUTPUT_SIZE,
-#             'num_layer': NUM_LAYER,
-#             'bidirectional': BIDIRECTIONAL,
-#             'dropout': DROPOUT,
-#             'state_dict': model.state_dict(),
-#             'pad_index': PAD_INDEX,
-#             'unk_index': UNK_INDEX,
-#             'text_vocab': TEXT.vocab.stoi,
-#     }
-#
-#     if eval_loss < best_eval_loss:
-#
-#         best_eval_loss = eval_loss
-#
-# test_acc, test_loss = test(model, test_iter, criterion=criterion)
-# print('Test Eval => acc {:.3f}, loss {:4f}'.format(test_acc, test_loss))
+    # save model
+    state = {
+        'vocab_size': VOCAB_SIZE,
+        'embedding_dim': EMBEDDING_DIM,
+        'hidden_size': HIDDEN_SIZE,
+        'output_size': OUTPUT_SIZE,
+        'num_layer': NUM_LAYER,
+        'bidirectional': BIDIRECTIONAL,
+        'dropout': DROPOUT,
+        'state_dict': model.state_dict(),
+        'pad_index': PAD_INDEX,
+        'unk_index': UNK_INDEX,
+        'text_vocab': TEXT.vocab.stoi,
+    }
+
+    # os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    # torch.save(state, MODEL_PATH)
+    if eval_loss < best_eval_loss:
+        # shutil.copy(MODEL_PATH, BEST_MODEL_PATH)
+        best_eval_loss = eval_loss

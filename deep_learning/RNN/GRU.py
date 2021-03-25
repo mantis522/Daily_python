@@ -78,6 +78,7 @@ class GRU(nn.Module):
         x, _ = self.gru(x, h_0)  # GRU의 리턴값은 (배치 크기, 시퀀스 길이, 은닉 상태의 크기)
         h_t = x[:,-1,:] # (배치 크기, 은닉 상태의 크기(입력벡터 차원수))의 텐서로 크기가 변경됨. 즉, 마지막 time-step의 은닉 상태만 가져온다.
         ## [:, -1, :]는 첫번째는 미니배치 크기, 두번째는 마지막 은닉상태, 세번째는 모든 hidden_dim을 의미하는 것
+
         self.dropout(h_t)
         logit = self.out(h_t)  # (배치 크기, 은닉 상태의 크기) -> (배치 크기, 출력층의 크기)
         return logit
@@ -127,11 +128,11 @@ for e in range(1, EPOCHS+1):
 
     # 검증 오차가 가장 적은 최적의 모델을 저장
     if not best_val_loss or val_loss < best_val_loss:
-        if not os.path.isdir("snapshot"):
-            os.makedirs("snapshot")
-        torch.save(model.state_dict(), './snapshot/txtclassification.pt')
+        # if not os.path.isdir("snapshot"):
+        #     os.makedirs("snapshot")
+        # torch.save(model.state_dict(), './snapshot/txtclassification.pt')
         best_val_loss = val_loss
 
-model.load_state_dict(torch.load('./snapshot/txtclassification.pt'))
+# model.load_state_dict(torch.load('./snapshot/txtclassification.pt'))
 test_loss, test_acc = evaluate(model, test_iter)
 print('테스트 오차: %5.2f | 테스트 정확도: %5.2f' % (test_loss, test_acc))
