@@ -76,9 +76,12 @@ class Attention(nn.Module):
         self.V = nn.Linear(hidden_dim, 1)
 
     def forward(self, input, z):
-        print(input.size())
         # input = [seq_len, batch_size, hidden dim]
+        # z = [batch_size, hidden dim]
+        ## 여기에서 hidden_dim은 아래 하이퍼 파라미터에서 설정하는 256
         w1h = self.w1(input).transpose(0, 1)
+        # w1h = [batch_size, seq_len, hidden_dim]
+        ## 여기에서 hidden_dim은 위 init에서 설정하는 100
         w2h = self.w2(z).unsqueeze(1)
         # w2h.size = [batch size, 1, hidden_dim]
         u_score = torch.tanh(w1h + w2h)
