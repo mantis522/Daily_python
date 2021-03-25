@@ -223,8 +223,8 @@ def main():
 
     model = model.to(device)
     EPOCH = 1
-    MODEL_PATH = './output/bilstm_model.pth'
-    BEST_MODEL_PATH = './output/bilstm_model_best.pth'
+    # MODEL_PATH = './output/bilstm_model.pth'
+    # BEST_MODEL_PATH = './output/bilstm_model_best.pth'
     best_eval_loss = float('inf')
     for epoch in range(EPOCH):
         print('{}/{}'.format(epoch, EPOCH))
@@ -250,10 +250,10 @@ def main():
             'text_vocab': TEXT.vocab.stoi,
         }
 
-        os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-        torch.save(state, MODEL_PATH)
+        # os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+        # torch.save(state, MODEL_PATH)
         if eval_loss < best_eval_loss:
-            shutil.copy(MODEL_PATH, BEST_MODEL_PATH)
+            # shutil.copy(MODEL_PATH, BEST_MODEL_PATH)
             best_eval_loss = eval_loss
 
     test_acc, test_loss = test(model, test_iter, criterion=criterion)
