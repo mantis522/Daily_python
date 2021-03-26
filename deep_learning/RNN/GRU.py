@@ -121,6 +121,7 @@ def evaluate(model, val_iter):
 
 best_val_loss = None
 for e in range(1, EPOCHS+1):
+
     train(model, optimizer, train_iter)
     val_loss, val_accuracy = evaluate(model, val_iter)
 

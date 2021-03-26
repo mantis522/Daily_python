@@ -222,7 +222,7 @@ def main():
     scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
 
     model = model.to(device)
-    EPOCH = 1
+    EPOCH = 5
     # MODEL_PATH = './output/bilstm_model.pth'
     # BEST_MODEL_PATH = './output/bilstm_model_best.pth'
     best_eval_loss = float('inf')
@@ -232,7 +232,7 @@ def main():
         eval_acc, eval_loss = test(model, eval_iter, criterion=criterion)
 
         print('Train => acc {:.3f}, loss {:4f}'.format(train_acc, train_loss))
-        print('Eval => acc {:.3f}, loss {:4f}'.format(eval_acc, eval_loss))
+        print('Valid => acc {:.3f}, loss {:4f}'.format(eval_acc, eval_loss))
         scheduler.step()
 
         # save model

@@ -7,233 +7,230 @@ from torch.optim import lr_scheduler
 from torchtext.data import TabularDataset
 from torchtext import data
 from tqdm import tqdm
-import shutil
+from torchtext.vocab import Vectors
+import torch.nn.functional as F
+
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 RANDOM_SEED = 2020
 MAX_VOCAB_SIZE = 25000  ## 상위 25k개 단어만 사전에 넣겠다는 의미.
 BATCH_SIZE = 128
-SEED = 1234
 
 torch.manual_seed(RANDOM_SEED)
 torch.backends.cudnn.deterministic = True
 
+# TEXT = data.Field(tokenize='spacy', fix_length=1000)
 TEXT = data.Field(tokenize=str.split, include_lengths=True)
-LABEL = data.LabelField(sequential=False, dtype=torch.float32)
+LABEL = data.LabelField(dtype = torch.float)
 
-train_data, test_data = TabularDataset.splits(
-            path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
-            fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
-
-train_data, valid_data = train_data.split(random_state=random.seed(SEED))
-
-print('Number of train data {}'.format(len(train_data)))
-print('Number of val data {}'.format(len(valid_data)))
-print('Number of test data {}'.format(len(test_data)))
-
-TEXT.build_vocab(train_data,
-                     max_size = MAX_VOCAB_SIZE,
-                     vectors = 'glove.6B.100d',
-                     unk_init = torch.Tensor.normal_)
-LABEL.build_vocab(train_data)
-
-train_iterator, valid_iterator, test_iterator = data.BucketIterator.splits(
-        (train_data, valid_data, test_data),
-        batch_size = BATCH_SIZE, sort_key=lambda x: len(x.review),
-        device = device)
-
-class BiLSTMSentiment(nn.Module):
-    def __init__(self, vocab_size, embedding_dim, hidden_size, output_size, num_layer, pad_index,
-                 bidirectional=False, dropout=0.5):
-        super(BiLSTMSentiment, self).__init__()
-
-        self.embedding = nn.Embedding(num_embeddings=vocab_size, ## size of the dictionary of embeddings
-                                      embedding_dim=embedding_dim, ## the size of each embedding vector
-                                      padding_idx=pad_index)
-        # num_embeddings : 임베딩을 할 단어들의 개수. 다시 말해 단어 집합의 크기입니다.
-        # embedding_dim : 임베딩 할 벡터의 차원입니다. 사용자가 정해주는 하이퍼파라미터입니다.
-        # padding_idx : 선택적으로 사용하는 인자입니다. 패딩을 위한 토큰의 인덱스를 알려줍니다.
-
-        self.lstm = nn.LSTM(input_size=embedding_dim,
-                            hidden_size=hidden_size,
-                            num_layers=num_layer,
-                            bidirectional=bidirectional,
-                            dropout=dropout)
-
-        self.fc = nn.Linear(hidden_size * 2, output_size)
-        self.use_att = True
-        self.att = Attention(hidden_size)
-
-        self.dropout = nn.Dropout(p=dropout)
-
-    def forward(self, text, text_length):
-        """
-        :param text: (seq_len, batch_size)
-        :param text_length:
-        :return:
-        """
-        # embedded => [seq_len, batch_size, embedding_dim]
-        embedded = self.embedding(text)
-        embedded = self.dropout(embedded)
-        text_length = text_length.cpu()  # compatible torch=1.7.0
-        # pack sequence
-        packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_length, batch_first=False, enforce_sorted=False)
-        ## pad_packed_sequence에 대해서 : https://simonjisu.github.io/nlp/2018/07/05/packedsequence.html
-        # lstm
-        # h_n => (num_direction * num_layers, batch_size, hidden_size)
-        # c_n => (num_direction * num_layers, batch_size, hidden_size)
-        packed_output, (h_n, c_n) = self.lstm(packed_embedded)
-
-        # unpacked sequence
-        output, output_length = nn.utils.rnn.pad_packed_sequence(packed_output, batch_first=False)
-
-        # hidden => (batch_size, hidden_size*num_direction)
-        # only use hidden state of last layer
-        hidden = torch.cat((h_n[-2, :, :], h_n[-1, :, :]), dim=1)
-        hidden = self.att(output, hidden)
-
-        hidden = self.dropout(hidden)
-
-        out = self.fc(hidden)
-        return (out)
-
-class Attention(nn.Module):
-    def __init__(self, input_dim, hidden_dim=64):
+class RNN(nn.Module):
+    def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers,
+                 bidirectional, dropout, pad_idx):
         super().__init__()
-        self.w1 = nn.Linear(input_dim, hidden_dim, bias=False)
-        self.w2 = nn.Linear(input_dim, hidden_dim)
-        self.V = nn.Linear(hidden_dim, 1)
 
-    def forward(self, input, z):
-        w1h = self.w1(input).transpose(0, 1)
-        # 위의 output과 동일한 크기
-        w2h = self.w2(z).unsqueeze(1)
-        # 위의 hidden과 동일한 크기
-        u_score = torch.tanh(w1h + w2h)
-        u_score = self.V(u_score)
-        att = torch.softmax(u_score, dim=1).transpose(1, 2)
+        self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
 
-        return torch.bmm(att, input.transpose(0, 1)).unsqueeze(1)
+        self.rnn = nn.LSTM(embedding_dim,
+                           hidden_dim,
+                           num_layers=n_layers,
+                           bidirectional=bidirectional,
+                           dropout=dropout)
 
-def binary_accuracy(pred, target, threshold=0.5):
-    preds = torch.sigmoid(pred) > threshold
-    correct = (preds==target).float()
-    return correct.mean()
+        self.attn = nn.Linear(hidden_dim * 2, 1)
 
-def train(model, data_loader, optimizer, criterion):
+        self.fc = nn.Linear(hidden_dim * 2, output_dim)
+
+        self.dropout = nn.Dropout(dropout)
+
+    def forward(self, text, text_lengths):
+        # text = [sent len, batch size]
+
+        embedded = self.dropout(self.embedding(text))
+
+        # embedded = [sent len, batch size, emb dim]
+        text_lengths = text_lengths.cpu()
+        # pack sequence
+        packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_lengths, enforce_sorted=False)
+
+        packed_output, (hidden, cell) = self.rnn(packed_embedded)
+
+        # unpack sequence
+        output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output)
+
+        # output = [sent len, batch size, hid dim * num directions]
+        # output over padding tokens are zero tensors
+
+        # hidden = [num layers * num directions, batch size, hid dim]
+        # cell = [num layers * num directions, batch size, hid dim]
+
+        # concat the final forward (hidden[-2,:,:]) and backward (hidden[-1,:,:]) hidden layers
+        # and apply dropout
+
+        # hidden = self.dropout(torch.add(hidden[-2,:,:], hidden[-1,:,:]))
+        # hidden = [batch size, hid dim]
+
+        output = output.permute(1, 0, 2)
+
+        # output = [batch size, sent len, hid dim *2]
+
+        output = torch.tanh(output)
+        # print("temp shape from the attention layer is ",temp.shape)
+        attention = F.softmax(self.attn(output), dim=1)
+        # print("attention shape is ", attention.shape)
+
+        # attention = [batch size, sent len,1]
+
+        attention = attention.squeeze(2)
+        # attention = [batch size, sent len]
+
+        attention = attention.unsqueeze(1)
+        # attention = [batch size, 1, src len]
+
+        # print("attention shape is ", attention.shape)
+        # print("output shape is ", output.shape)
+
+        representation = torch.bmm(attention, output)
+
+        # representation = [batch size, 1 ,hid dim *2]
+
+        representation = representation.squeeze(1)
+
+        # representation = [batch size, hid_dim *2]
+
+        return self.fc(representation), attention
+
+def binary_accuracy(preds, y):
+    #round predictions to the closest integer
+    rounded_preds = torch.round(torch.sigmoid(preds))
+    correct = (rounded_preds == y).float() #convert into float for division
+    acc = correct.sum() / len(correct)
+    return acc
+
+
+def train(model, iterator, optimizer, criterion):
+    epoch_loss = 0
+    epoch_acc = 0
     model.train()
+    pbar = tqdm(iterator, position=0, leave=True)
 
-    epoch_loss = []
-    epoch_acc = []
-
-    pbar = tqdm(data_loader)
-    for data in pbar:
-        text = data.review[0].to(device)
-        text_length = data.review[1]
-        label = data.sentiment.to(device)
-
-        pred = model(text, text_length)
-        loss = criterion(pred, label.unsqueeze(dim=1))
-        # grad clearing
+    for batch in pbar:
         optimizer.zero_grad()
+        text, text_lengths = batch.review
+        predictions, _ = model(text, text_lengths)
+        predictions = predictions.squeeze(1)
+        loss = criterion(predictions, batch.sentiment)
         loss.backward()
         optimizer.step()
-
         batch_loss = loss.item()
-        batch_acc = binary_accuracy(pred, label.unsqueeze(dim=1)).item()
-        batch_size = text.shape[1]
+        batch_acc = binary_accuracy(predictions, batch.sentiment)
 
-        epoch_loss.append(batch_loss)
-        epoch_acc.append(batch_acc)
+        epoch_loss += batch_loss
+        epoch_acc += batch_acc.item()
 
         pbar.set_description('train => acc {} loss {}'.format(batch_acc, batch_loss))
 
-    return sum(epoch_acc) / len(data_loader), sum(epoch_loss) / len(data_loader)
+    return epoch_loss / len(iterator), epoch_acc / len(iterator)
 
 
-def test(model, data_loader, criterion):
+def evaluate(model, iterator, criterion):
+    epoch_loss = 0
+    epoch_acc = 0
     model.eval()
 
-    epoch_loss = []
-    epoch_acc = []
     with torch.no_grad():
-        pbar = tqdm(data_loader)
-        for data in pbar:
-            text = data.review[0].to(device)
-            text_length = data.review[1]
-            label = data.sentiment.to(device)
-            pred = model(text, text_length)
-            loss = criterion(pred, label.unsqueeze(dim=1))
-
+        pbar = tqdm(iterator, position=0, leave=True)
+        for batch in iterator:
+            text, text_lengths = batch.review
+            predictions, _ = model(text, text_lengths)
+            predictions = predictions.squeeze(1)
+            loss = criterion(predictions, batch.sentiment)
+            batch_acc = binary_accuracy(predictions, batch.sentiment)
             batch_loss = loss.item()
-            batch_acc = binary_accuracy(pred, label.unsqueeze(dim=1)).item()
-
-            epoch_loss.append(batch_loss)
-            epoch_acc.append(batch_acc)
+            epoch_loss += batch_loss
+            epoch_acc += batch_acc.item()
 
             pbar.set_description('eval() => acc {} loss {}'.format(batch_acc, batch_loss))
 
-    return sum(epoch_acc) / len(data_loader), sum(epoch_loss) / len(data_loader)
+    return epoch_loss / len(iterator), epoch_acc / len(iterator)
 
-VOCAB_SIZE = len(TEXT.vocab)
-HIDDEN_SIZE = 256
-OUTPUT_SIZE = 1
-NUM_LAYER = 2
-BIDIRECTIONAL = True
-DROPOUT = 0.5
-EMBEDDING_DIM = 100
-PAD_INDEX = TEXT.vocab.stoi[TEXT.pad_token]
-UNK_INDEX = TEXT.vocab.stoi[TEXT.unk_token]
 
-model = BiLSTMSentiment(vocab_size=VOCAB_SIZE, embedding_dim=EMBEDDING_DIM, hidden_size=HIDDEN_SIZE,
-                        output_size=OUTPUT_SIZE, num_layer=NUM_LAYER, bidirectional=BIDIRECTIONAL,
-                        dropout=DROPOUT, pad_index=PAD_INDEX)
+def main():
+    train_data, test_data = TabularDataset.splits(
+        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
+        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
-pretrained_embedding = TEXT.vocab.vectors
-pretrained_embedding[PAD_INDEX] = 0
-pretrained_embedding[UNK_INDEX] = 0
+    train_data, eval_data = train_data.split(random_state=random.seed(RANDOM_SEED))
+    glove_vectors = Vectors(r"D:\ruin\data\glove.6B\glove.6B.100d.txt")
 
-model.embedding.weight.data.copy_(pretrained_embedding)
+    TEXT.build_vocab(train_data,
+                     max_size=MAX_VOCAB_SIZE,
+                     vectors=glove_vectors,
+                     min_freq=10)
+    LABEL.build_vocab(train_data)
 
-    # optimizer
-optimizer = optim.Adam(model.parameters(), lr=0.001, weight_decay=1e-4)
-    # criterion
-criterion = nn.BCEWithLogitsLoss()
-scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+    train_iter = data.BucketIterator(train_data, batch_size=BATCH_SIZE, device=device, shuffle=True)
+    eval_iter, test_iter = data.BucketIterator.splits((eval_data, test_data), batch_size=BATCH_SIZE, device=device,
+                                                      sort_key=lambda x: len(x.review),
+                                                      sort_within_batch=True)
 
-model = model.to(device)
-EPOCH = 1
-# MODEL_PATH = './output/bilstm_model.pth'
-# BEST_MODEL_PATH = './output/bilstm_model_best.pth'
-best_eval_loss = float('inf')
+    INPUT_DIM = len(TEXT.vocab)
+    EMBEDDING_DIM = 100
+    HIDDEN_DIM = 128
+    OUTPUT_DIM = 1
+    N_LAYERS = 2
+    BIDIRECTIONAL = True
+    DROPOUT = 0.5
+    PAD_IDX = TEXT.vocab.stoi[TEXT.pad_token]
 
-for epoch in range(EPOCH):
-    print('{}/{}'.format(epoch, EPOCH))
-    train_acc, train_loss = train(model, train_iterator, optimizer=optimizer, criterion=criterion)
-    eval_acc, eval_loss = test(model, valid_iterator, criterion=criterion)
+    model = RNN(INPUT_DIM,
+                EMBEDDING_DIM,
+                HIDDEN_DIM,
+                OUTPUT_DIM,
+                N_LAYERS,
+                BIDIRECTIONAL,
+                DROPOUT,
+                PAD_IDX)
 
-    print('Train => acc {:.3f}, loss {:4f}'.format(train_acc, train_loss))
-    print('Eval => acc {:.3f}, loss {:4f}'.format(eval_acc, eval_loss))
-    scheduler.step()
+    pretrained_embeddings = TEXT.vocab.vectors
 
-    # save model
-    state = {
-        'vocab_size': VOCAB_SIZE,
-        'embedding_dim': EMBEDDING_DIM,
-        'hidden_size': HIDDEN_SIZE,
-        'output_size': OUTPUT_SIZE,
-        'num_layer': NUM_LAYER,
-        'bidirectional': BIDIRECTIONAL,
-        'dropout': DROPOUT,
-        'state_dict': model.state_dict(),
-        'pad_index': PAD_INDEX,
-        'unk_index': UNK_INDEX,
-        'text_vocab': TEXT.vocab.stoi,
-    }
+    model.embedding.weight.data.copy_(pretrained_embeddings)
 
-    # os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
-    # torch.save(state, MODEL_PATH)
-    if eval_loss < best_eval_loss:
-        # shutil.copy(MODEL_PATH, BEST_MODEL_PATH)
-        best_eval_loss = eval_loss
+    UNK_IDX = TEXT.vocab.stoi[TEXT.unk_token]
+
+    model.embedding.weight.data[UNK_IDX] = torch.zeros(EMBEDDING_DIM)
+    model.embedding.weight.data[PAD_IDX] = torch.zeros(EMBEDDING_DIM)
+
+    optimizer = optim.Adam(model.parameters())
+
+    criterion = nn.BCEWithLogitsLoss()
+    scheduler = lr_scheduler.StepLR(optimizer, step_size=5, gamma=0.1)
+
+    model = model.to(device)
+    criterion = criterion.to(device)
+
+    N_EPOCHS = 10
+
+    best_valid_loss = float('inf')
+
+    for epoch in range(N_EPOCHS):
+        print('{}/{}'.format(epoch, N_EPOCHS))
+
+        train_loss, train_acc = train(model, train_iter, optimizer, criterion)
+        valid_loss, valid_acc = evaluate(model, eval_iter, criterion)
+
+        print()
+        print('Train => acc {:.3f}, loss {:4f}'.format(train_acc, train_loss))
+        print('Valid => acc {:.3f}, loss {:4f}'.format(valid_acc, valid_loss))
+        scheduler.step()
+
+        if valid_loss < best_valid_loss:
+            best_valid_loss = valid_loss
+
+    test_loss, test_acc = evaluate(model, test_iter, criterion)
+
+    print()
+    print('Test Eval => acc {:.3f}, loss {:4f}'.format(test_acc, test_loss))
+
+if __name__ == "__main__":
+    main()
