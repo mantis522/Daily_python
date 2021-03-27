@@ -66,3 +66,109 @@ pos_embs = nn_pos(positions) # position embedding
 print(inputs)
 print(positions)
 print(pos_embs.size())
+
+input_sums = input_embs + pos_embs
+
+Q = input_sums
+K = input_sums
+V = input_sums
+# 사이즈는 전부 [2, 8, 128]
+attn_mask = inputs.eq(0).unsqueeze(1).expand(Q.size(0), Q.size(1), K.size(1))
+
+print(attn_mask.size())
+
+scores = torch.matmul(Q, K.transpose(-1, -2))
+# K.transpose(-1, -2) 사이즈는 torch.Size([2, 128, 8])
+print(scores.size())
+
+d_head = 64
+scores = scores.mul_(1/d_head**0.5)
+print(scores.size())
+print(scores[0])
+
+scores.masked_fill_(attn_mask, -1e9)
+print(scores.size())
+print(scores[0])
+
+attn_prob = nn.Softmax(dim=-1)(scores)
+print(attn_prob.size())
+print(attn_prob[0])
+
+context = torch.matmul(attn_prob, V)
+print(context.size())
+
+Q = input_sums
+K = input_sums
+V = input_sums
+## [2, 8, 128]. [batch size, seq_len, hidden_dim]
+attn_mask = inputs.eq(0).unsqueeze(1).expand(Q.size(0), Q.size(1), K.size(1))
+
+batch_size = Q.size(0)
+n_head = 2
+
+W_Q = nn.Linear(d_hidn, n_head * d_head)
+W_K = nn.Linear(d_hidn, n_head * d_head)
+W_V = nn.Linear(d_hidn, n_head * d_head)
+
+# (bs, n_seq, n_head * d_head)
+q_s = W_Q(Q)
+print(q_s.size())
+
+# (bs, n_seq, n_head, d_head)
+q_s = q_s.view(batch_size, -1, n_head, d_head)
+print(q_s.size())
+
+# (bs, n_head, n_seq, d_head)
+q_s = q_s.transpose(1,2)
+print(q_s.size())
+
+# (bs, n_head, n_seq, d_head)
+q_s = W_Q(Q).view(batch_size, -1, n_head, d_head).transpose(1,2)
+# (bs, n_head, n_seq, d_head)
+k_s = W_K(K).view(batch_size, -1, n_head, d_head).transpose(1,2)
+# (bs, n_head, n_seq, d_head)
+v_s = W_V(V).view(batch_size, -1, n_head, d_head).transpose(1,2)
+print(q_s.size(), k_s.size(), v_s.size())
+
+print(attn_mask.size())
+print(attn_mask.unsqueeze(1).size())
+
+attn_mask = attn_mask.unsqueeze(1).repeat(1, n_head, 1, 1)
+print(attn_mask.size())
+
+
+class ScaledDotProductAttention(nn.Module):
+    def __init__(self, d_head):
+        super().__init__()
+        self.scale = 1 / (d_head ** 0.5)
+
+    def forward(self, Q, K, V, attn_mask):
+        # (bs, n_head, n_q_seq, n_k_seq)
+        scores = torch.matmul(Q, K.transpose(-1, -2)).mul_(self.scale)
+        scores.masked_fill_(attn_mask, -1e9)
+        # (bs, n_head, n_q_seq, n_k_seq)
+        attn_prob = nn.Softmax(dim=-1)(scores)
+        # (bs, n_head, n_q_seq, d_v)
+        context = torch.matmul(attn_prob, V)
+        # (bs, n_head, n_q_seq, d_v), (bs, n_head, n_q_seq, n_v_seq)
+        return context, attn_prob
+
+scaled_dot_attn = ScaledDotProductAttention(d_head)
+context, attn_prob = scaled_dot_attn(q_s, k_s, v_s, attn_mask)
+print(context.size())
+# torch.Size([2, 2, 8, 64])
+print(attn_prob.size())
+
+context = context.transpose(1, 2).contiguous().view(batch_size, -1, n_head * d_head)
+print(context.size())
+
+linear = nn.Linear(n_head * d_head, d_hidn)
+# (bs, n_seq, d_hidn)
+output = linear(context)
+print(output.size())
+
+conv1 = nn.Conv1d(in_channels=d_hidn, out_channels=d_hidn * 4, kernel_size=1)
+# (bs, d_hidn * 4, n_seq)
+print(conv1.weight.shape)
+ff_1 = conv1(output.transpose(1, 2))
+print(ff_1.size())
