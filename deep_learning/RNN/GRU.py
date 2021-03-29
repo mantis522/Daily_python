@@ -81,6 +81,7 @@ class GRU(nn.Module):
 
         self.dropout(h_t)
         logit = self.out(h_t)  # (배치 크기, 은닉 상태의 크기) -> (배치 크기, 출력층의 크기)
+        print(logit.size())
         return logit
 
     # def _init_state(self, batch_size=1):

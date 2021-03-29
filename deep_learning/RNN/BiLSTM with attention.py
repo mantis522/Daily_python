@@ -28,83 +28,65 @@ class RNN(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim, output_dim, n_layers,
                  bidirectional, dropout, pad_idx):
         super().__init__()
-
         self.embedding = nn.Embedding(vocab_size, embedding_dim, padding_idx=pad_idx)
-
         self.rnn = nn.LSTM(embedding_dim,
                            hidden_dim,
                            num_layers=n_layers,
                            bidirectional=bidirectional,
                            dropout=dropout)
-
         self.attn = nn.Linear(hidden_dim * 2, 1)
-
         self.fc = nn.Linear(hidden_dim * 2, output_dim)
-
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, text, text_lengths):
         # text = [sent len, batch size]
 
         embedded = self.dropout(self.embedding(text))
-
         # embedded = [sent len, batch size, emb dim]
         text_lengths = text_lengths.cpu()
         # pack sequence
         packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_lengths, enforce_sorted=False)
-
         packed_output, (hidden, cell) = self.rnn(packed_embedded)
-
         # unpack sequence
         output, output_lengths = nn.utils.rnn.pad_packed_sequence(packed_output)
-
         # output = [sent len, batch size, hid dim * num directions]
         # output over padding tokens are zero tensors
-
         # hidden = [num layers * num directions, batch size, hid dim]
         # cell = [num layers * num directions, batch size, hid dim]
-
         # concat the final forward (hidden[-2,:,:]) and backward (hidden[-1,:,:]) hidden layers
         # and apply dropout
-
         # hidden = self.dropout(torch.add(hidden[-2,:,:], hidden[-1,:,:]))
         # hidden = [batch size, hid dim]
-
         output = output.permute(1, 0, 2)
-
         # output = [batch size, sent len, hid dim *2]
-
         output = torch.tanh(output)
         # print("temp shape from the attention layer is ",temp.shape)
         attention = F.softmax(self.attn(output), dim=1)
         # print("attention shape is ", attention.shape)
-
         # attention = [batch size, sent len,1]
-
         attention = attention.squeeze(2)
         # attention = [batch size, sent len]
-
         attention = attention.unsqueeze(1)
         # attention = [batch size, 1, src len]
-
-        # print("attention shape is ", attention.shape)
-        # print("output shape is ", output.shape)
-
+        print("attention shape is ", attention.shape)
+        print("output shape is ", output.shape)
         representation = torch.bmm(attention, output)
-
         # representation = [batch size, 1 ,hid dim *2]
-
         representation = representation.squeeze(1)
-
         # representation = [batch size, hid_dim *2]
-
-        return self.fc(representation), attention
+        representation = self.fc(representation)
+        print("representation shape is ", representation.shape)
+        # representation = [batch size, output_dim]
+        return representation, attention
 
 def binary_accuracy(preds, y):
     #round predictions to the closest integer
     rounded_preds = torch.round(torch.sigmoid(preds))
+    # print("round preds ", len(rounded_preds))
     correct = (rounded_preds == y).float() #convert into float for division
+    # print("correct is ", correct)
     acc = correct.sum() / len(correct)
+    # print("acc is ", acc)
     return acc
 
 
@@ -119,6 +101,7 @@ def train(model, iterator, optimizer, criterion):
         text, text_lengths = batch.review
         predictions, _ = model(text, text_lengths)
         predictions = predictions.squeeze(1)
+        ## [128, 1]로 출력되는 것을 [128]로 만들어주기 위해 squeeze(1)을 넣어줌.
         loss = criterion(predictions, batch.sentiment)
         loss.backward()
         optimizer.step()

@@ -86,8 +86,12 @@ class BiLSTMSentiment(nn.Module):
             hidden = h_n[-1:, :, :]
 
         hidden = self.dropout(hidden)
-
+        # print("hidden : ", hidden.shape)
+        # hidden = [batch_size, hidden_size * num_direction]
         out = self.fc(hidden)
+        ## 만약 fc를 받으면
+        # print("out ", out.shape)
+        # out = [batch_size, output_size]
         return out
 
 
@@ -109,6 +113,7 @@ def train(model, data_loader, optimizer, criterion):
         label = data.sentiment.to(device)
 
         pred = model(text, text_length)
+        print("pred : ", pred.shape)
         loss = criterion(pred, label.unsqueeze(dim=1))
         # grad clearing
         optimizer.zero_grad()

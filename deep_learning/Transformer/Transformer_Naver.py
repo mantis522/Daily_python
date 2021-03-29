@@ -375,6 +375,12 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
 test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\ratings_test.json")
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
 
+# test = vars(test_dataset)
+#
+# print(len(test['labels']))
+#
+# print(len(test['sentences']))
+
 """ 모델 epoch 평가 """
 def eval_epoch(config, model, data_loader):
     matchs = []
@@ -385,7 +391,6 @@ def eval_epoch(config, model, data_loader):
     with tqdm(total=len(data_loader), desc=f"Valid") as pbar:
         for i, value in enumerate(data_loader):
             labels, enc_inputs, dec_inputs = map(lambda v: v.to(config.device), value)
-
             outputs = model(enc_inputs, dec_inputs)
             logits = outputs[0]
             _, indices = logits.max(1)
@@ -406,11 +411,11 @@ def train_epoch(config, epoch, model, criterion, optimizer, train_loader):
     with tqdm(total=len(train_loader), desc=f"Train {epoch}") as pbar:
         for i, value in enumerate(train_loader):
             labels, enc_inputs, dec_inputs = map(lambda v: v.to(config.device), value)
-
+            print("labels : ", labels.shape)
             optimizer.zero_grad()
             outputs = model(enc_inputs, dec_inputs)
             logits = outputs[0]
-
+            print("logits : ", logits.shape)
             loss = criterion(logits, labels)
             loss_val = loss.item()
             losses.append(loss_val)

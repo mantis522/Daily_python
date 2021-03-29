@@ -1,5 +1,9 @@
-from torchtext.vocab import GloVe
-from torchtext.vocab import Vectors
+import torch.nn.functional as F
+import torch
 
-glove_vectors = Vectors(r"D:\ruin\data\glove.6B\glove.6B.100d.txt")
-print(glove_vectors)
+
+a = torch.randn(4)
+b = torch.round(a)
+
+print(a)
+print(b)
