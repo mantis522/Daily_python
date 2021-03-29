@@ -177,7 +177,7 @@ def main():
     print('Unique token in Text vocabulary {}'.format(len(TEXT.vocab)))  # 250002(<unk>, <pad>)
     print(TEXT.vocab.itos)
     print('Unique token in LABEL vocabulary {}'.format(len(LABEL.vocab)))
-    print(TEXT.vocab.itos)
+    print(LABEL.vocab.itos)
 
     print('Top 20 frequency of word: \n {}'.format(TEXT.vocab.freqs.most_common(20)))
     print('Embedding shape {}'.format(TEXT.vocab.vectors.size))
