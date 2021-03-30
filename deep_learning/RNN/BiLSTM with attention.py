@@ -44,6 +44,7 @@ class RNN(nn.Module):
         embedded = self.dropout(self.embedding(text))
         # embedded = [sent len, batch size, emb dim]
         text_lengths = text_lengths.cpu()
+        # text_length = [batch_size]
         # pack sequence
         packed_embedded = nn.utils.rnn.pack_padded_sequence(embedded, text_lengths, enforce_sorted=False)
         packed_output, (hidden, cell) = self.rnn(packed_embedded)
@@ -60,7 +61,7 @@ class RNN(nn.Module):
         output = output.permute(1, 0, 2)
         # output = [batch size, sent len, hid dim *2]
         output = torch.tanh(output)
-        # print("temp shape from the attention layer is ",temp.shape)
+
         attention = F.softmax(self.attn(output), dim=1)
         # print("attention shape is ", attention.shape)
         # attention = [batch size, sent len,1]
@@ -68,14 +69,11 @@ class RNN(nn.Module):
         # attention = [batch size, sent len]
         attention = attention.unsqueeze(1)
         # attention = [batch size, 1, src len]
-        print("attention shape is ", attention.shape)
-        print("output shape is ", output.shape)
         representation = torch.bmm(attention, output)
         # representation = [batch size, 1 ,hid dim *2]
         representation = representation.squeeze(1)
         # representation = [batch size, hid_dim *2]
         representation = self.fc(representation)
-        print("representation shape is ", representation.shape)
         # representation = [batch size, output_dim]
         return representation, attention
 
