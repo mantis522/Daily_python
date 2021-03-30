@@ -69,6 +69,7 @@ class GRU(nn.Module):
                           num_layers=self.n_layers,
                           batch_first=True)
         self.attn = nn.Linear(hidden_dim, 1)
+        ## 어텐션 스코어값이 스칼라값이라는게 이건가? 1차원으로 만드는거
         self.out = nn.Linear(self.hidden_dim, n_classes)
 
     def forward(self, x):
@@ -76,22 +77,22 @@ class GRU(nn.Module):
         h_0 = torch.zeros(self.n_layers, x.size(0), self.hidden_dim).to(DEVICE) # 첫번째 히든 스테이트를 0벡터로 초기화
         # h_0 = self._init_state(batch_size=x.size(0)) # 첫번째 히든 스테이트를 0벡터로 초기화
         x, _ = self.gru(x, h_0)  # GRU의 리턴값은 (배치 크기, 시퀀스 길이, 은닉 상태의 크기)
-        # h_t = x[:,-1,:] # (배치 크기, 은닉 상태의 크기(입력벡터 차원수))의 텐서로 크기가 변경됨. 즉, 마지막 time-step의 은닉 상태만 가져온다.
-        # ## [:, -1, :]는 첫번째는 미니배치 크기, 두번째는 마지막 은닉상태, 세번째는 모든 hidden_dim을 의미하는 것
-        #
-        #
-        #
-        # self.dropout(h_t)
-        # logit = self.out(h_t)  # (배치 크기, 은닉 상태의 크기) -> (배치 크기, 출력층의 크기)
 
-        x = torch.tanh(x)
+        # x = [batch size, seq_len, hidden size]
         attention = F.softmax(self.attn(x), dim=1)
+        # attention = [batch size, sent len, 1]
         attention = attention.squeeze(2)
+        # attention = [batch size, sent len]
         attention = attention.unsqueeze(1)
+        # attention = [batch size, 1, src len]
         representation = torch.bmm(attention, x)
+        # representation = [batch size, 1, hid dim]
         representation = representation.squeeze(1)
+        # representation = [batch size, hid_dim]
+        representation = torch.tanh(representation)
         representation = self.dropout(representation)
         representation = self.out(representation)
+        # representation = [batch size, output_dim]
 
         return representation, attention
 
