@@ -1,6 +1,7 @@
-import argparse
-from collections import Counter, OrderedDict
+import torch
 
-from prenlp.tokenizer import SentencePiece, NLTKMosesTokenizer
+a = torch.randn(3, 1, 3)
+print(a)
 
-TOKENIZER = {'nltk_moses': NLTKMosesTokenizer()}
+b = torch.max(a, dim=1)
+print(b.shape)
