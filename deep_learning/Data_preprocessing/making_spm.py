@@ -13,18 +13,23 @@ import sentencepiece as spm
 #     " --eos_id=3 --eos_piece=[EOS]" + # end of sequence (3)
 #     " --user_defined_symbols=[SEP],[CLS],[MASK]") # 사용자 정의 토큰
 
-sp = spm.SentencePieceProcessor()
-vocab_file = r"D:\ruin\data\transformer_imdb\imdb.model"
-sp.load(vocab_file)
+import pandas as pd
+import json
 
-lines = [
-  "I didn't at all think of it this way.",
-  "I have waited a long time for someone to film"
-]
-for line in lines:
-  print(line)
-  print(sp.encode_as_pieces(line))
-  print(sp.encode_as_ids(line))
-  print()
+vocab_file = r"D:\ruin\data\transformer_test\imdb.model"
+vocab = spm.SentencePieceProcessor()
+vocab.load(vocab_file)
 
-print(sp.GetPieceSize())
+def prepare_train(vocab, infile, outfile):
+    df = pd.read_csv(infile)
+    with open(outfile, "w") as f:
+        for index, row in df.iterrows():
+            document = row["text"]
+            if type(document) != str:
+                continue
+            instance = { "id": row["Unnamed: 0"], "doc": vocab.encode_as_pieces(document), "label": row["label"] }
+            f.write(json.dumps(instance))
+            f.write("\n")
+
+prepare_train(vocab, r"D:\ruin\data\transformer_test\imdb_train.csv", "ratings_train.json")
+prepare_train(vocab, r"D:\ruin\data\transformer_test\imdb_test.csv", "ratings_test.json")

@@ -77,7 +77,7 @@ class GRU(nn.Module):
         h_0 = torch.zeros(self.n_layers, x.size(0), self.hidden_dim).to(DEVICE) # 첫번째 히든 스테이트를 0벡터로 초기화
         # h_0 = self._init_state(batch_size=x.size(0)) # 첫번째 히든 스테이트를 0벡터로 초기화
         x, _ = self.gru(x, h_0)  # GRU의 리턴값은 (배치 크기, 시퀀스 길이, 은닉 상태의 크기)
-
+        x = torch.tanh(x)
         # x = [batch size, seq_len, hidden size]
         attention = F.softmax(self.attn(x), dim=1)
         # attention = [batch size, sent len, 1]
@@ -89,7 +89,7 @@ class GRU(nn.Module):
         # representation = [batch size, 1, hid dim]
         representation = representation.squeeze(1)
         # representation = [batch size, hid_dim]
-        representation = torch.tanh(representation)
+        # representation = torch.tanh(representation)
         representation = self.dropout(representation)
         representation = self.out(representation)
         # representation = [batch size, output_dim]

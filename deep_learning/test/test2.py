@@ -1,6 +1,6 @@
-import sentencepiece as spm
+import argparse
+from collections import Counter, OrderedDict
 
-vocab_file = r"D:\ruin\data\transformer_test\kowiki.model"
-vocab = spm.SentencePieceProcessor()
-vocab.load(vocab_file)
+from prenlp.tokenizer import SentencePiece, NLTKMosesTokenizer
 
+TOKENIZER = {'nltk_moses': NLTKMosesTokenizer()}

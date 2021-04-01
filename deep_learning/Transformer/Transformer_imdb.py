@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import json
 
-vocab_file = r"D:\ruin\data\json_data\imdb\imdb.model"
+vocab_file = r"D:\ruin\data\transformer_test\imdb\imdb.model"
 vocab = spm.SentencePieceProcessor()
 vocab.load(vocab_file)
 
@@ -28,8 +28,8 @@ class Config(dict):
 config = Config({
     "n_enc_vocab": len(vocab),
     "n_dec_vocab": len(vocab),
-    "n_enc_seq": 256,
-    "n_dec_seq": 256,
+    "n_enc_seq": 2000,
+    "n_dec_seq": 2000,
     "n_layer": 6,
     "d_hidn": 256,
     "i_pad": 0,
@@ -368,9 +368,9 @@ def movie_collate_fn(inputs):
 
 """ 데이터 로더 """
 batch_size = 128
-train_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_imdb\ratings_train.json")
+train_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\imdb\ratings_train.json")
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=movie_collate_fn)
-test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_imdb\ratings_test.json")
+test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\imdb\ratings_test.json")
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
 
 """ 모델 epoch 평가 """
@@ -403,11 +403,9 @@ def train_epoch(config, epoch, model, criterion, optimizer, train_loader):
     with tqdm(total=len(train_loader), desc=f"Train {epoch}") as pbar:
         for i, value in enumerate(train_loader):
             labels, enc_inputs, dec_inputs = map(lambda v: v.to(config.device), value)
-            print("labels : ", labels)
             optimizer.zero_grad()
             outputs = model(enc_inputs, dec_inputs)
             logits = outputs[0]
-            print("logits : ", logits)
             loss = criterion(logits, labels)
             loss_val = loss.item()
             losses.append(loss_val)

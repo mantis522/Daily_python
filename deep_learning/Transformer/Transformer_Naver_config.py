@@ -14,6 +14,34 @@ vocab_file = r"D:\ruin\data\transformer_test\naver\kowiki.model"
 vocab = spm.SentencePieceProcessor()
 vocab.load(vocab_file)
 
+""" configuration json을 읽어들이는 class """
+class Config(dict):
+    __getattr__ = dict.__getitem__
+    __setattr__ = dict.__setitem__
+
+    @classmethod
+    def load(cls, file):
+        with open(file, 'r') as f:
+            config = json.loads(f.read())
+            return Config(config)
+
+
+config = Config({
+    "n_enc_vocab": len(vocab),
+    "n_dec_vocab": len(vocab),
+    "n_enc_seq": 256,
+    "n_dec_seq": 256,
+    "n_layer": 6,
+    "d_hidn": 256,
+    "i_pad": 0,
+    "d_ff": 1024,
+    "n_head": 4,
+    "d_head": 64,
+    "dropout": 0.1,
+    "layer_norm_epsilon": 1e-12
+})
+
+
 """ sinusoid position encoding """
 def get_sinusoid_encoding_table(n_seq, d_hidn):
     def cal_angle(position, i_hidn):
@@ -45,10 +73,11 @@ def get_attn_decoder_mask(seq):
 
 
 class ScaledDotProductAttention(nn.Module):
-    def __init__(self, dropout, d_head):
+    def __init__(self, config):
         super().__init__()
-        self.dropout = nn.Dropout(dropout)
-        self.scale = 1 / (d_head ** 0.5)
+        self.config = config
+        self.dropout = nn.Dropout(config.dropout)
+        self.scale = 1 / (self.config.d_head ** 0.5)
 
     def forward(self, Q, K, V, attn_mask):
         # (bs, n_head, n_q_seq, n_k_seq)
@@ -67,34 +96,33 @@ class ScaledDotProductAttention(nn.Module):
 
 
 class MultiHeadAttention(nn.Module):
-    def __init__(self, d_hidn, n_head, d_head, dropout):
+    def __init__(self, config):
         super().__init__()
-        self.d_hidn = d_hidn
-        self.n_head = n_head
-        self.d_head = d_head
-        self.W_Q = nn.Linear(d_hidn, n_head * d_head)
-        self.W_K = nn.Linear(d_hidn, n_head * d_head)
-        self.W_V = nn.Linear(d_hidn, n_head * d_head)
-        self.scaled_dot_attn = ScaledDotProductAttention(dropout, d_head)
-        self.linear = nn.Linear(n_head * d_head, d_hidn)
-        self.dropout = nn.Dropout(dropout)
+        self.config = config
+
+        self.W_Q = nn.Linear(self.config.d_hidn, self.config.n_head * self.config.d_head)
+        self.W_K = nn.Linear(self.config.d_hidn, self.config.n_head * self.config.d_head)
+        self.W_V = nn.Linear(self.config.d_hidn, self.config.n_head * self.config.d_head)
+        self.scaled_dot_attn = ScaledDotProductAttention(self.config)
+        self.linear = nn.Linear(self.config.n_head * self.config.d_head, self.config.d_hidn)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, Q, K, V, attn_mask):
         batch_size = Q.size(0)
         # (bs, n_head, n_q_seq, d_head)
-        q_s = self.W_Q(Q).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
+        q_s = self.W_Q(Q).view(batch_size, -1, self.config.n_head, self.config.d_head).transpose(1, 2)
         # (bs, n_head, n_k_seq, d_head)
-        k_s = self.W_K(K).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
+        k_s = self.W_K(K).view(batch_size, -1, self.config.n_head, self.config.d_head).transpose(1, 2)
         # (bs, n_head, n_v_seq, d_head)
-        v_s = self.W_V(V).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
+        v_s = self.W_V(V).view(batch_size, -1, self.config.n_head, self.config.d_head).transpose(1, 2)
 
         # (bs, n_head, n_q_seq, n_k_seq)
-        attn_mask = attn_mask.unsqueeze(1).repeat(1, self.n_head, 1, 1)
+        attn_mask = attn_mask.unsqueeze(1).repeat(1, self.config.n_head, 1, 1)
 
         # (bs, n_head, n_q_seq, d_head), (bs, n_head, n_q_seq, n_k_seq)
         context, attn_prob = self.scaled_dot_attn(q_s, k_s, v_s, attn_mask)
         # (bs, n_head, n_q_seq, h_head * d_head)
-        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.n_head * self.d_head)
+        context = context.transpose(1, 2).contiguous().view(batch_size, -1, self.config.n_head * self.config.d_head)
         # (bs, n_head, n_q_seq, e_embd)
         output = self.linear(context)
         output = self.dropout(output)
@@ -102,11 +130,13 @@ class MultiHeadAttention(nn.Module):
         return output, attn_prob
 
 class PoswiseFeedForwardNet(nn.Module):
-    def __init__(self, d_hidn, d_ff, dropout):
+    def __init__(self, config):
         super().__init__()
-        self.fc_1 = nn.Linear(d_hidn, d_ff)
-        self.fc_2 = nn.Linear(d_ff, d_hidn)
-        self.dropout = nn.Dropout(dropout)
+        self.config = config
+
+        self.fc_1 = nn.Linear(self.config.d_hidn, self.config.d_ff)
+        self.fc_2 = nn.Linear(self.config.d_ff, self.config.d_hidn)
+        self.dropout = nn.Dropout(config.dropout)
 
     def forward(self, x):
         # x: [batch_size, seq_len, hidden_dim]
@@ -123,12 +153,14 @@ class PoswiseFeedForwardNet(nn.Module):
 
 
 class EncoderLayer(nn.Module):
-    def __init__(self, d_hidn, n_head, d_head, dropout, d_ff, layer_norm_epsilon):
+    def __init__(self, config):
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_hidn, n_head, d_head, dropout)
-        self.layer_norm1 = nn.LayerNorm(d_hidn, eps=layer_norm_epsilon)
-        self.pos_ffn = PoswiseFeedForwardNet(d_hidn, d_ff, dropout)
-        self.layer_norm2 = nn.LayerNorm(d_hidn, eps=layer_norm_epsilon)
+        self.config = config
+
+        self.self_attn = MultiHeadAttention(self.config)
+        self.layer_norm1 = nn.LayerNorm(self.config.d_hidn, eps=self.config.layer_norm_epsilon)
+        self.pos_ffn = PoswiseFeedForwardNet(self.config)
+        self.layer_norm2 = nn.LayerNorm(self.config.d_hidn, eps=self.config.layer_norm_epsilon)
 
     def forward(self, inputs, attn_mask):
         # (bs, n_enc_seq, d_hidn), (bs, n_head, n_enc_seq, n_enc_seq)
@@ -145,28 +177,28 @@ class EncoderLayer(nn.Module):
 
 
 class Encoder(nn.Module):
-    def __init__(self, n_enc_vocab, d_hidn, n_enc_seq, n_head, d_head, dropout,
-                 d_ff, layer_norm_epsilon, n_layer, i_pad):
+    def __init__(self, config):
         super().__init__()
-        self.i_pad = i_pad
-        self.enc_emb = nn.Embedding(n_enc_vocab, d_hidn)
-        sinusoid_table = torch.FloatTensor(get_sinusoid_encoding_table(n_enc_seq + 1, d_hidn))
+        self.config = config
+
+        self.enc_emb = nn.Embedding(self.config.n_enc_vocab, self.config.d_hidn)
+        sinusoid_table = torch.FloatTensor(get_sinusoid_encoding_table(self.config.n_enc_seq + 1, self.config.d_hidn))
         self.pos_emb = nn.Embedding.from_pretrained(sinusoid_table, freeze=True)
 
-        self.layers = nn.ModuleList([EncoderLayer(d_hidn, n_head, d_head, dropout, d_ff, layer_norm_epsilon) for _ in range(n_layer)])
+        self.layers = nn.ModuleList([EncoderLayer(self.config) for _ in range(self.config.n_layer)])
 
     def forward(self, inputs):
         positions = torch.arange(inputs.size(1), device=inputs.device, dtype=inputs.dtype).expand(inputs.size(0),
                                                                                                   inputs.size(
                                                                                                       1)).contiguous() + 1
-        pos_mask = inputs.eq(self.i_pad)
+        pos_mask = inputs.eq(self.config.i_pad)
         positions.masked_fill_(pos_mask, 0)
 
         # (bs, n_enc_seq, d_hidn)
         outputs = self.enc_emb(inputs) + self.pos_emb(positions)
 
         # (bs, n_enc_seq, n_enc_seq)
-        attn_mask = get_attn_pad_mask(inputs, inputs, self.i_pad)
+        attn_mask = get_attn_pad_mask(inputs, inputs, self.config.i_pad)
 
         attn_probs = []
         for layer in self.layers:
@@ -181,14 +213,16 @@ class Encoder(nn.Module):
 
 
 class DecoderLayer(nn.Module):
-    def __init__(self, d_hidn, n_head, d_head, dropout, d_ff, layer_norm_epsilon):
+    def __init__(self, config):
         super().__init__()
-        self.self_attn = MultiHeadAttention(d_hidn, n_head, d_head, dropout)
-        self.layer_norm1 = nn.LayerNorm(d_hidn, eps=layer_norm_epsilon)
-        self.dec_enc_attn = MultiHeadAttention(d_hidn, n_head, d_head, dropout)
-        self.layer_norm2 = nn.LayerNorm(d_hidn, eps=layer_norm_epsilon)
-        self.pos_ffn = PoswiseFeedForwardNet(d_hidn, d_ff, dropout)
-        self.layer_norm3 = nn.LayerNorm(d_hidn, eps=layer_norm_epsilon)
+        self.config = config
+
+        self.self_attn = MultiHeadAttention(self.config)
+        self.layer_norm1 = nn.LayerNorm(self.config.d_hidn, eps=self.config.layer_norm_epsilon)
+        self.dec_enc_attn = MultiHeadAttention(self.config)
+        self.layer_norm2 = nn.LayerNorm(self.config.d_hidn, eps=self.config.layer_norm_epsilon)
+        self.pos_ffn = PoswiseFeedForwardNet(self.config)
+        self.layer_norm3 = nn.LayerNorm(self.config.d_hidn, eps=self.config.layer_norm_epsilon)
 
     def forward(self, dec_inputs, enc_outputs, self_attn_mask, dec_enc_attn_mask):
         # (bs, n_dec_seq, d_hidn), (bs, n_head, n_dec_seq, n_dec_seq)
@@ -209,34 +243,33 @@ class DecoderLayer(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, n_dec_vocab, d_hidn, n_dec_seq, n_layer, n_head, d_head,
-                 dropout, d_ff, layer_norm_epsilon, i_pad):
+    def __init__(self, config):
         super().__init__()
-        self.i_pad = i_pad
+        self.config = config
 
-        self.dec_emb = nn.Embedding(n_dec_vocab, d_hidn)
-        sinusoid_table = torch.FloatTensor(get_sinusoid_encoding_table(n_dec_seq + 1, d_hidn))
+        self.dec_emb = nn.Embedding(self.config.n_dec_vocab, self.config.d_hidn)
+        sinusoid_table = torch.FloatTensor(get_sinusoid_encoding_table(self.config.n_dec_seq + 1, self.config.d_hidn))
         self.pos_emb = nn.Embedding.from_pretrained(sinusoid_table, freeze=True)
 
-        self.layers = nn.ModuleList([DecoderLayer(d_hidn, n_head, d_head, dropout, d_ff, layer_norm_epsilon) for _ in range(n_layer)])
+        self.layers = nn.ModuleList([DecoderLayer(self.config) for _ in range(self.config.n_layer)])
 
     def forward(self, dec_inputs, enc_inputs, enc_outputs):
         positions = torch.arange(dec_inputs.size(1), device=dec_inputs.device, dtype=dec_inputs.dtype).expand(
             dec_inputs.size(0), dec_inputs.size(1)).contiguous() + 1
-        pos_mask = dec_inputs.eq(self.i_pad)
+        pos_mask = dec_inputs.eq(self.config.i_pad)
         positions.masked_fill_(pos_mask, 0)
 
         # (bs, n_dec_seq, d_hidn)
         dec_outputs = self.dec_emb(dec_inputs) + self.pos_emb(positions)
 
         # (bs, n_dec_seq, n_dec_seq)
-        dec_attn_pad_mask = get_attn_pad_mask(dec_inputs, dec_inputs, self.i_pad)
+        dec_attn_pad_mask = get_attn_pad_mask(dec_inputs, dec_inputs, self.config.i_pad)
         # (bs, n_dec_seq, n_dec_seq)
         dec_attn_decoder_mask = get_attn_decoder_mask(dec_inputs)
         # (bs, n_dec_seq, n_dec_seq)
         dec_self_attn_mask = torch.gt((dec_attn_pad_mask + dec_attn_decoder_mask), 0)
         # (bs, n_dec_seq, n_enc_seq)
-        dec_enc_attn_mask = get_attn_pad_mask(dec_inputs, enc_inputs, self.i_pad)
+        dec_enc_attn_mask = get_attn_pad_mask(dec_inputs, enc_inputs, self.config.i_pad)
 
         self_attn_probs, dec_enc_attn_probs = [], []
         for layer in self.layers:
@@ -253,11 +286,12 @@ class Decoder(nn.Module):
 
 
 class Transformer(nn.Module):
-    def __init__(self, n_enc_vocab, n_dec_vocab, d_hidn, n_enc_seq, n_dec_seq,
-                 n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad):
+    def __init__(self, config):
         super().__init__()
-        self.encoder = Encoder(n_enc_vocab, d_hidn, n_enc_seq, n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad)
-        self.decoder = Decoder(n_dec_vocab, d_hidn, n_dec_seq, n_layer, n_head, d_head, dropout, d_ff, layer_norm_epsilon, i_pad)
+        self.config = config
+
+        self.encoder = Encoder(self.config)
+        self.decoder = Decoder(self.config)
 
     def forward(self, enc_inputs, dec_inputs):
         # (bs, n_enc_seq, d_hidn), [(bs, n_head, n_enc_seq, n_enc_seq)]
@@ -272,12 +306,12 @@ class Transformer(nn.Module):
 
 
 class MovieClassification(nn.Module):
-    def __init__(self, n_enc_vocab, n_dec_vocab, d_hidn, n_enc_seq, n_dec_seq,
-                 n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad, n_output):
+    def __init__(self, config):
         super().__init__()
-        self.transformer = Transformer(n_enc_vocab, n_dec_vocab, d_hidn, n_enc_seq, n_dec_seq,
-                 n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad)
-        self.projection = nn.Linear(d_hidn, n_output, bias=False)
+        self.config = config
+
+        self.transformer = Transformer(self.config)
+        self.projection = nn.Linear(self.config.d_hidn, self.config.n_output, bias=False)
 
     def forward(self, enc_inputs, dec_inputs):
         # (bs, n_dec_seq, d_hidn), [(bs, n_head, n_enc_seq, n_enc_seq)], [(bs, n_head, n_dec_seq, n_dec_seq)], [(bs, n_head, n_dec_seq, n_enc_seq)]
@@ -341,10 +375,8 @@ train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size,
 test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\naver\ratings_test.json")
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
 """ 모델 epoch 평가 """
-def eval_epoch(model, data_loader):
+def eval_epoch(config, model, data_loader):
     matchs = []
     model.eval()
 
@@ -352,7 +384,7 @@ def eval_epoch(model, data_loader):
     n_correct_total = 0
     with tqdm(total=len(data_loader), desc=f"Valid") as pbar:
         for i, value in enumerate(data_loader):
-            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
+            labels, enc_inputs, dec_inputs = map(lambda v: v.to(config.device), value)
             outputs = model(enc_inputs, dec_inputs)
             logits = outputs[0]
             _, indices = logits.max(1)
@@ -366,13 +398,13 @@ def eval_epoch(model, data_loader):
     return np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
 
 """ 모델 epoch 학습 """
-def train_epoch(epoch, model, criterion, optimizer, train_loader):
+def train_epoch(config, epoch, model, criterion, optimizer, train_loader):
     losses = []
     model.train()
 
     with tqdm(total=len(train_loader), desc=f"Train {epoch}") as pbar:
         for i, value in enumerate(train_loader):
-            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
+            labels, enc_inputs, dec_inputs = map(lambda v: v.to(config.device), value)
             optimizer.zero_grad()
             outputs = model(enc_inputs, dec_inputs)
             logits = outputs[0]
@@ -387,14 +419,14 @@ def train_epoch(epoch, model, criterion, optimizer, train_loader):
             pbar.set_postfix_str(f"Loss: {loss_val:.3f} ({np.mean(losses):.3f})")
     return np.mean(losses)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+config.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+config.n_output = 2
 
 learning_rate = 5e-5
 n_epoch = 2
 
-model = MovieClassification(n_enc_vocab=len(vocab), n_dec_vocab=len(vocab), d_hidn=256, n_enc_seq=256, n_dec_seq=256,
-                 n_head=4, d_head=64, dropout=0.1, d_ff=1024, layer_norm_epsilon=1e-12, n_layer=6, i_pad=0, n_output=2)
-model.to(device)
+model = MovieClassification(config)
+model.to(config.device)
 
 criterion = torch.nn.CrossEntropyLoss()
 optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
@@ -402,8 +434,8 @@ optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
 best_epoch, best_loss, best_score = 0, 0, 0
 losses, scores = [], []
 for epoch in range(n_epoch):
-    loss = train_epoch(epoch, model, criterion, optimizer, train_loader)
-    score = eval_epoch(model, test_loader)
+    loss = train_epoch(config, epoch, model, criterion, optimizer, train_loader)
+    score = eval_epoch(config, model, test_loader)
 
     losses.append(loss)
     scores.append(score)
