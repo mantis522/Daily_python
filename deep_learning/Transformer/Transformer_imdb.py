@@ -96,7 +96,6 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, Q, K, V, attn_mask):
-        print(Q.shape)
         batch_size = Q.size(0)
         # (bs, n_head, n_q_seq, d_head)
         q_s = self.W_Q(Q).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
@@ -353,13 +352,15 @@ class MovieDataSet(torch.utils.data.Dataset):
                 line_cnt += 1
 
         with open(infile, "r") as f:
+            max_len = 128
+            ## 문장이 인코딩 시퀀스보다 길어서 임베딩 out of index 에러가 발생하는 경우엔 maxlen을 통해 문장 길이를 짧게 해줌.
             for i, line in enumerate(tqdm(f, total=line_cnt, desc=f"Loading {infile}", unit=" lines")):
                 data = json.loads(line)
                 self.labels.append(data["label"])
                 ## 입력 파일로부터 label 읽어들임
-                self.sentences.append([vocab.piece_to_id(p) for p in data["doc"]])
+                self.sentences.append([vocab.piece_to_id(p) for p in data["doc"]][:max_len])
                 ## 입력 파일로부터 'doc' token을 읽어 숫자로 변경.
-
+                ## 문장 길이가 인코딩 시퀀스보다 길기 때문에 max_len으로 조절. 문제는 이게 좀 커지면 OOM 나온다...
     def __len__(self):
         assert len(self.labels) == len(self.sentences)
         return len(self.labels)

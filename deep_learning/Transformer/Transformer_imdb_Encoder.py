@@ -93,17 +93,20 @@ class MultiHeadAttention(nn.Module):
 
         return H, A
 
-class CNN(nn.Module):
-    def __init__(self, d_model, hidden_dim, p):
+class PoswiseFeedForwardNet(nn.Module):
+    def __init__(self, d_hidn, d_ff, dropout):
         super().__init__()
-        self.k1convL1 = nn.Linear(d_model,    hidden_dim)
-        self.k1convL2 = nn.Linear(hidden_dim, d_model)
-        self.activation = nn.ReLU()
+        self.fc_1 = nn.Linear(d_hidn, d_ff)
+        self.fc_2 = nn.Linear(d_ff, d_hidn)
+        self.dropout = nn.Dropout(dropout)
 
     def forward(self, x):
-        x = self.k1convL1(x)
-        x = self.activation(x)
-        x = self.k1convL2(x)
+        # x: [batch_size, seq_len, hidden_dim]
+        x = self.dropout(torch.relu(self.fc_1(x)))
+        # x: [batch_size, seq_len, pf_dim]
+        x = self.fc_2(x)
+        x = self.dropout(x)
+        # x: [batch_size, seq_len, hidden_dim]
         return x
 
 
@@ -112,7 +115,7 @@ class EncoderLayer(nn.Module):
         super().__init__()
 
         self.mha = MultiHeadAttention(d_model, num_heads, p)  # Self-attetion = Cross-attetion with q=k=v=x
-        self.cnn = CNN(d_model, conv_hidden_dim, p)
+        self.pos_fnn = PoswiseFeedForwardNet(d_model, conv_hidden_dim, p)
 
         self.layernorm1 = nn.LayerNorm(normalized_shape=d_model, eps=1e-6)
         self.layernorm2 = nn.LayerNorm(normalized_shape=d_model, eps=1e-6)
@@ -125,10 +128,10 @@ class EncoderLayer(nn.Module):
         out1 = self.layernorm1(x + attn_output)  # (batch_size, input_seq_len, d_model)
 
         # Feed forward
-        cnn_output = self.cnn(out1)  # (batch_size, input_seq_len, d_model)
+        ffn = self.pos_fnn(out1)  # (batch_size, input_seq_len, d_model)
 
         # Second layer norm after adding residual connection
-        out2 = self.layernorm2(out1 + cnn_output)  # (batch_size, input_seq_len, d_model)
+        out2 = self.layernorm2(out1 + ffn)  # (batch_size, input_seq_len, d_model)
 
         return out2
 
@@ -143,6 +146,8 @@ def create_sinusoidal_embeddings(nb_p, dim, E):
     E.detach_()
     E.requires_grad = False
     E = E.to(device)
+
+    return E
 
 
 class Embeddings(nn.Module):
@@ -230,10 +235,10 @@ train_loader, valid_loader, test_loader = data.BucketIterator.splits(
 
 
 class TransformerClassifier(nn.Module):
-    def __init__(self, num_layers, d_model, num_heads, conv_hidden_dim, input_vocab_size, num_answers):
+    def __init__(self, num_layers, d_model, num_heads, hidden_dim, input_vocab_size, num_answers):
         super().__init__()
 
-        self.encoder = Encoder(num_layers, d_model, num_heads, conv_hidden_dim, input_vocab_size,
+        self.encoder = Encoder(num_layers, d_model, num_heads, hidden_dim, input_vocab_size,
                                maximum_position_encoding=10000)
         self.dense = nn.Linear(d_model, num_answers)
 
@@ -245,13 +250,12 @@ class TransformerClassifier(nn.Module):
         return x
 
 model = TransformerClassifier(num_layers=1, d_model=32, num_heads=2,
-                         conv_hidden_dim=128, input_vocab_size=50002, num_answers=2)
+                         hidden_dim=128, input_vocab_size=50002, num_answers=2)
 model.to(device)
 
 optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
-epochs = 15
+epochs = 10
 t_total = len(train_loader) * epochs
-
 
 def train(train_loader, valid_loader):
     for epoch in range(epochs):
