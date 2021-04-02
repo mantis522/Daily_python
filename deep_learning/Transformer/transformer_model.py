@@ -7,12 +7,6 @@ from tqdm import tqdm
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import json
-
-# vocab loading
-vocab_file = r"D:\ruin\data\transformer_test\imdb\imdb.model"
-vocab = spm.SentencePieceProcessor()
-vocab.load(vocab_file)
 
 """ sinusoid position encoding """
 def get_sinusoid_encoding_table(n_seq, d_hidn):
@@ -96,7 +90,6 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, Q, K, V, attn_mask):
-        print(Q.shape)
         batch_size = Q.size(0)
         # (bs, n_head, n_q_seq, d_head)
         q_s = self.W_Q(Q).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
@@ -307,161 +300,41 @@ class Transformer(nn.Module):
         # (bs, n_dec_seq, n_dec_vocab), [(bs, n_head, n_enc_seq, n_enc_seq)], [(bs, n_head, n_dec_seq, n_dec_seq)], [(bs, n_head, n_dec_seq, n_enc_seq)]
         return dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_enc_attn_probs
 
+from torchtext import data
+from torchtext.data import TabularDataset
+BATCH_SIZE = 64
+lr = 0.001
+EPOCHS = 3
 
-""" naver movie classfication """
+TEXT = data.Field(sequential=True,
+                  use_vocab=True,
+                  tokenize=str.split,
+                  lower=True,
+                  batch_first=True)
 
+LABEL = data.Field(sequential=False,
+                   use_vocab=False,
+                   batch_first=False,
+                   is_target=True)
 
-class MovieClassification(nn.Module):
-    def __init__(self, n_enc_vocab, n_dec_vocab, d_hidn, n_enc_seq, n_dec_seq,
-                 n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad, n_output):
-        super().__init__()
-        self.transformer = Transformer(n_enc_vocab, n_dec_vocab, d_hidn, n_enc_seq, n_dec_seq,
-                 n_head, d_head, dropout, d_ff, layer_norm_epsilon, n_layer, i_pad)
-        self.projection = nn.Linear(d_hidn, n_output, bias=False)
-        ## 크로스 엔트로피 쓰는 것과 비슷하게 최종 출력값이 2가 나와야 하기 때문에 위와 같이.
-        ## (bs, n_output)
+train_data, test_data = TabularDataset.splits(
+        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
+        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
 
-    def forward(self, enc_inputs, dec_inputs):
-        # (bs, n_dec_seq, d_hidn), [(bs, n_head, n_enc_seq, n_enc_seq)], [(bs, n_head, n_dec_seq, n_dec_seq)], [(bs, n_head, n_dec_seq, n_enc_seq)]
-        dec_outputs, enc_self_attn_probs, dec_self_attn_probs, dec_enc_attn_probs = self.transformer(enc_inputs,
-                                                                                                     dec_inputs)
-        ## Encoder input과 Decoder input을 입력으로 트랜스포머 모델 실행.
-        # (bs, d_hidn)
-        # print("before : ", dec_outputs.shape)
-        # dec_outputs, _ = torch.max(dec_outputs, dim=1)
-        dec_outputs = dec_outputs.squeeze()
-        ## 트랜스포머 출력의 max 값을 구함.
-        ## 혹시나 해서 위 코드로 바꿔봤는데 결과는 똑같음... 왜 굳이 max 하는지 모르겠네
-        # print("after : ", dec_outputs.shape)
-        # (bs, n_output)
-        logits = self.projection(dec_outputs)
-        # (bs, n_output), [(bs, n_head, n_enc_seq, n_enc_seq)], [(bs, n_head, n_dec_seq, n_dec_seq)], [(bs, n_head, n_dec_seq, n_enc_seq)]
-        return logits, enc_self_attn_probs, dec_self_attn_probs, dec_enc_attn_probs
+print('훈련 샘플의 개수 : {}'.format(len(train_data)))
+print('테스트 샘플의 개수 : {}'.format(len(test_data)))
 
+TEXT.build_vocab(train_data, min_freq=5) # 단어 집합 생성
+LABEL.build_vocab(train_data)
 
-""" 영화 분류 데이터셋 """
+n_classes = 2
 
-class MovieDataSet(torch.utils.data.Dataset):
-    def __init__(self, vocab, infile):
-        self.vocab = vocab
-        self.labels = []
-        self.sentences = []
+vocab_size = len(TEXT.vocab)
 
-        line_cnt = 0
-        with open(infile, "r") as f:
-            for line in f:
-                line_cnt += 1
+train_data, val_data = train_data.split(split_ratio=0.8)
 
-        with open(infile, "r") as f:
-            for i, line in enumerate(tqdm(f, total=line_cnt, desc=f"Loading {infile}", unit=" lines")):
-                data = json.loads(line)
-                self.labels.append(data["label"])
-                ## 입력 파일로부터 label 읽어들임
-                self.sentences.append([vocab.piece_to_id(p) for p in data["doc"]])
-                ## 입력 파일로부터 'doc' token을 읽어 숫자로 변경.
-
-    def __len__(self):
-        assert len(self.labels) == len(self.sentences)
-        return len(self.labels)
-
-    def __getitem__(self, item):
-        return (torch.tensor(self.labels[item]),
-                torch.tensor(self.sentences[item]),
-                torch.tensor([self.vocab.piece_to_id("[BOS]")]))
-                ## 디코더의 입력은 [BOS]로 고정
-
-""" movie data collate_fn """
-def movie_collate_fn(inputs):
-    labels, enc_inputs, dec_inputs = list(zip(*inputs))
-    ## 위에서 __getitem__ 으로 보낸 것.
-    ## 그래서 dec_inputs가 2로만 고정.
-
-    enc_inputs = torch.nn.utils.rnn.pad_sequence(enc_inputs, batch_first=True, padding_value=0)
-    dec_inputs = torch.nn.utils.rnn.pad_sequence(dec_inputs, batch_first=True, padding_value=0)
-    ## 인코더와 디코더 input의 길이가 같아지도록 짧은 문장에 padding을 추가.
-    ## padding은 Sentencepiece vocab 만들때의 -pad_id=0 옵션으로 지정한 값
-
-    batch = [
-        torch.stack(labels, dim=0),
-        ## Label은 길이가 1 고정이므로 stack 함수를 이용해 tensor로 만듦.
-        enc_inputs,
-        dec_inputs,
-    ]
-    return batch
-
-""" 데이터 로더 """
-batch_size = 128
-train_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\imdb\ratings_train.json")
-train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=movie_collate_fn)
-test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\imdb\ratings_test.json")
-test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
-
+train_iter, val_iter, test_iter = data.BucketIterator.splits(
+        (train_data, val_data, test_data), sort=False,batch_size=BATCH_SIZE,
+        shuffle=True, repeat=False)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-""" 모델 epoch 학습 """
-def train_epoch(epoch, model, criterion, optimizer, train_loader):
-    losses = []
-    model.train()
-
-    with tqdm(total=len(train_loader), desc=f"Train {epoch}") as pbar:
-        for i, value in enumerate(train_loader):
-            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
-            optimizer.zero_grad()
-            outputs = model(enc_inputs, dec_inputs)
-            logits = outputs[0]
-            loss = criterion(logits, labels)
-            loss_val = loss.item()
-            losses.append(loss_val)
-
-            loss.backward()
-            optimizer.step()
-
-            pbar.update(1)
-            pbar.set_postfix_str(f"Loss: {loss_val:.3f} ({np.mean(losses):.3f})")
-    return np.mean(losses)
-
-""" 모델 epoch 평가 """
-def eval_epoch(model, data_loader):
-    matchs = []
-    model.eval()
-
-    n_word_total = 0
-    n_correct_total = 0
-    with tqdm(total=len(data_loader), desc=f"Valid") as pbar:
-        for i, value in enumerate(data_loader):
-            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
-            outputs = model(enc_inputs, dec_inputs)
-            logits = outputs[0]
-            _, indices = logits.max(1)
-
-            match = torch.eq(indices, labels).detach()
-            matchs.extend(match.cpu())
-            accuracy = np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
-
-            pbar.update(1)
-            pbar.set_postfix_str(f"Acc: {accuracy:.3f}")
-    return np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
-
-learning_rate = 5e-5
-n_epoch = 2
-
-model = MovieClassification(n_enc_vocab=len(vocab), n_dec_vocab=len(vocab), d_hidn=256, n_enc_seq=256, n_dec_seq=256,
-                 n_head=4, d_head=64, dropout=0.1, d_ff=1024, layer_norm_epsilon=1e-12, n_layer=6, i_pad=0, n_output=2)
-model.to(device)
-
-criterion = torch.nn.CrossEntropyLoss()
-optimizer = torch.optim.Adam(model.parameters(), lr=learning_rate)
-
-best_epoch, best_loss, best_score = 0, 0, 0
-losses, scores = [], []
-for epoch in range(n_epoch):
-    loss = train_epoch(epoch, model, criterion, optimizer, train_loader)
-    score = eval_epoch(model, test_loader)
-
-    losses.append(loss)
-    scores.append(score)
-
-    if best_score < score:
-        best_epoch, best_loss, best_score = epoch, loss, score
-print(f">>>> epoch={best_epoch}, loss={best_loss:.5f}, score={best_score:.5f}")

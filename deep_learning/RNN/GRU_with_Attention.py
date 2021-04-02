@@ -56,6 +56,9 @@ train_iter, val_iter, test_iter = data.BucketIterator.splits(
         (train_data, val_data, test_data), sort=False,batch_size=BATCH_SIZE,
         shuffle=True, repeat=False)
 
+for data in train_iter:
+    print(data.review)
+
 
 class GRU(nn.Module):
     def __init__(self, n_layers, hidden_dim, n_vocab, embed_dim, n_classes, dropout_p=0.2):

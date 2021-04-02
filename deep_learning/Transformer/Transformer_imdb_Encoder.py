@@ -1,300 +1,310 @@
-import os
-import random
 import torch
-import torch.nn  as nn
-import torch.optim as optim
-from torch.optim import lr_scheduler
-from torchtext.data import TabularDataset
-from torchtext import data
-from tqdm import tqdm
-from torchtext.vocab import Vectors
-import torch.nn.functional as F
+from torch import nn
+import torch.nn.functional as f
+import numpy as np
 
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
-
-def get_imdb(batch_size, max_length):
-    TEXT = data.Field(tokenize=str.split, include_lengths=True, batch_first=True, fix_length=max_length)
-    LABEL = data.LabelField(sequential=False)
-
-    train_data, test_data = TabularDataset.splits(
-        path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
-        fields=[('review', TEXT), ('sentiment', LABEL)], skip_header=True)
-
-    glove_vectors = Vectors(r"D:\ruin\data\glove.6B\glove.6B.100d.txt")
-
-    TEXT.build_vocab(train_data,
-                     vectors=glove_vectors,
-                     min_freq=10)
-    LABEL.build_vocab(train_data)
-
-    train_iter, test_iter = data.BucketIterator.splits((train_data, test_data), batch_size=batch_size, device=-1,
-                                                      sort_key=lambda x: len(x.review))
-
-    return train_iter, test_iter, TEXT.vocab.vectors, TEXT.vocab
-
-def get_pos_onehot(length):
-    # initial zero matrix [length, length]
-    onehot = torch.zeros(length, length)
-
-    idxs = torch.arange(length).long().view(-1, 1)
-
-    onehot.scatter_(1, idxs, 1)
-    return onehot
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+nn_Softargmax = nn.Softmax  # fix wrong name
 
 
 class MultiHeadAttention(nn.Module):
-    """
-        A multihead attention module,
-        using scaled dot-product attention.
-    """
 
-    def __init__(self, input_size, hidden_size, num_heads):
-        super(MultiHeadAttention, self).__init__()
-        self.input_size = input_size
-        self.hidden_size = hidden_size
+    def __init__(self, d_model, num_heads, p, d_input=None):
+        super().__init__()
         self.num_heads = num_heads
+        self.d_model = d_model
+        if d_input is None:
+            d_xq = d_xk = d_xv = d_model
+        else:
+            d_xq, d_xk, d_xv = d_input
 
-        self.head_size = int(self.hidden_size / num_heads)
+        # Make sure that the embedding dimension of model is a multiple of number of heads
+        assert d_model % self.num_heads == 0
 
-        self.q_linear = nn.Linear(self.input_size, self.hidden_size)
-        self.k_linear = nn.Linear(self.input_size, self.hidden_size)
-        self.v_linear = nn.Linear(self.input_size, self.hidden_size)
-        #
-        self.joint_linear = nn.Linear(self.hidden_size, self.hidden_size)
+        self.d_k = d_model // self.num_heads
 
-        self.softmax = nn.Softmax(dim=-1)
+        # These are still of dimension d_model. They will be split into number of heads
+        # - This matrix allows us to rotate the current input (see section: #Queries,-keys-and-values)
+        self.W_q = nn.Linear(d_xq, d_model, bias=False)  # q = W_q*x
+        self.W_k = nn.Linear(d_xk, d_model, bias=False)  # k = W_k*x
+        self.W_v = nn.Linear(d_xv, d_model, bias=False)  # v = W_v*x
 
-    def forward(self, q, k, v):
-        # project the queries, keys and values by their respective weight matrices
-        q_proj = self.q_linear(q).view(q.size(0), q.size(1), self.num_heads, self.head_size).transpose(1, 2)
-        k_proj = self.k_linear(k).view(k.size(0), k.size(1), self.num_heads, self.head_size).transpose(1, 2)
-        v_proj = self.v_linear(v).view(v.size(0), v.size(1), self.num_heads, self.head_size).transpose(1, 2)
+        # Outputs of all sub-layers need to be of dimension d_model
+        # -  (see section (in cross-attetion): #Implementation)
+        self.W_h = nn.Linear(d_model, d_model)
 
-        # calculate attention weights
-        unscaled_weights = torch.matmul(q_proj, k_proj.transpose(2, 3))
-        weights = self.softmax(unscaled_weights / torch.sqrt(torch.Tensor([self.head_size * 1.0]).to(unscaled_weights)))
+    def scaled_dot_product_attention(self, Q, K, V):
+        """
+        Attention vectorization calculation: A = softargmax(K^T*Q) and
+        Hidden vectorization representation: H = V*A
+        (see section: #Cross-attention)
+        """
 
-        # weight values by their corresponding attention weights
-        weighted_v = torch.matmul(weights, v_proj)
+        batch_size = Q.size(0)
+        k_length = K.size(-2)
 
-        weighted_v = weighted_v.transpose(1, 2).contiguous()
+        # Scaling by d_k so that the soft(arg)max doesnt saturate
+        Q = Q / np.sqrt(self.d_k)  # (bs, n_heads, q_length, dim_per_head)
 
-        # do a linear projection of the weighted sums of values
-        joint_proj = self.joint_linear(weighted_v.view(q.size(0), q.size(1), self.hidden_size))
+        # -- Compute the K - Q aligment: K^T*Q
+        scores = torch.matmul(Q, K.transpose(2, 3))  # (bs, n_heads, q_length, k_length)
 
-        # store a reference to attention weights, for THIS forward pass,
-        # for visualisation purposes
-        self.weights = weights
+        # -- Compute the attention: softargmax(K-Q aligment)
+        A = nn_Softargmax(dim=-1)(scores)  # (bs, n_heads, q_length, k_length)
 
-        return joint_proj
+        # -- Compute the hidden representation: H = V*A
+        # Get the weighted average of the values
+        H = torch.matmul(A, V)  # (bs, n_heads, q_length, dim_per_head)
 
+        return H, A
 
-class Block(nn.Module):
-    """
-        One block of the transformer.
-        Contains a multihead attention sublayer
-        followed by a feed forward network.
-    """
+    def split_heads(self, x, batch_size):
+        """
+        Split the last dimension into (heads X depth)
+        Return after transpose to put in shape (batch_size X num_heads X seq_length X d_k)
+        """
+        return x.view(batch_size, -1, self.num_heads, self.d_k).transpose(1, 2)
 
-    def __init__(self, input_size, hidden_size, num_heads, activation=nn.ReLU, dropout=None):
-        super(Block, self).__init__()
-        self.dropout = dropout
+    def group_heads(self, x, batch_size):
+        """
+        Combine the heads again to get (batch_size X seq_length X (num_heads times d_k))
+        """
+        return x.transpose(1, 2).contiguous().view(batch_size, -1, self.num_heads * self.d_k)
 
-        self.attention = MultiHeadAttention(input_size, hidden_size, num_heads)
-        self.attention_norm = nn.LayerNorm(input_size)
+    def forward(self, X_q, X_k, X_v):
+        batch_size, seq_length, dim = X_q.size()
 
-        ff_layers = [
-            nn.Linear(input_size, hidden_size),
-            activation(),
-            nn.Linear(hidden_size, input_size),
-        ]
+        # -- Gets query Q, keys K and values V from the inputs using W_q, W_k and W_v
+        # After transforming, split into num_heads
+        Q = self.split_heads(self.W_q(X_q), batch_size)  # (bs, n_heads, q_length, dim_per_head) -> Q = W_q*X_q
+        K = self.split_heads(self.W_k(X_k), batch_size)  # (bs, n_heads, k_length, dim_per_head) -> K = W_k*X_k
+        V = self.split_heads(self.W_v(X_v), batch_size)  # (bs, n_heads, v_length, dim_per_head) -> V = W_v*X_v
 
-        if self.dropout:
-            self.attention_dropout = nn.Dropout(dropout)
-            ff_layers.append(nn.Dropout(dropout))
-        # nn.Sequential(): Modules will be added to it in the order they are passed in the constructor. Alternatively,
-        # an ordered dict of modules can also be passed in.
-        self.ff = nn.Sequential(*ff_layers)
-        self.ff_norm = nn.LayerNorm(input_size)
+        # -- Calculate the attention weights and hidden representations for each of the heads
+        H_cat, A = self.scaled_dot_product_attention(Q, K, V)
+
+        # Put all the heads back together by concat
+        H_cat = self.group_heads(H_cat, batch_size)  # (bs, q_length, dim)
+
+        # -- Collapse the h-long hidden representation vector in the model dimension using W_h
+        # -  (see section (in cross-attetion): #Implementation)
+        # Final linear layer
+        H = self.W_h(H_cat)  # (bs, q_length, dim)
+
+        return H, A
+
+class CNN(nn.Module):
+    def __init__(self, d_model, hidden_dim, p):
+        super().__init__()
+        self.k1convL1 = nn.Linear(d_model,    hidden_dim)
+        self.k1convL2 = nn.Linear(hidden_dim, d_model)
+        self.activation = nn.ReLU()
 
     def forward(self, x):
-        attended = self.attention_norm(self.attention_dropout(self.attention(x, x, x)) + x)
-        return self.ff_norm(self.ff(attended) + x)
-
-class Transformer(nn.Module):
-    def __init__(self, input_size, hidden_size, ff_size, num_blocks, num_heads, activation=nn.ReLU, dropout=None):
-        """
-            A single Transformer Network
-            input_size: hidden weight
-            hidden_size: hidden weight
-            ff_size: hiden weight
-        """
-        super(Transformer, self).__init__()
-        # construct num_blocks block, no residual structure
-        self.blocks = nn.Sequential(*[Block(input_size, hidden_size, num_heads, activation, dropout=dropout)
-                                      for _ in range(num_blocks)])
-
-    def forward(self, x):
-        """
-            Sequentially applies the blocks of the Transformer network
-        """
-        return self.blocks(x)
-
-
-class Net(nn.Module):
-    """
-        A neural network that encodes a sequence
-        using a Transformer network
-    """
-
-    def __init__(self, embeddings, max_length, model_size=128, num_heads=4, num_blocks=1, dropout=0.1,
-                 train_word_embeddings=True):
-        super(Net, self).__init__()
-        # Creates Embedding instance from given 2-dimensional FloatTensor.
-        # embeddings (Tensor): FloatTensor containing weights for the Embedding.
-        # First dimension is being passed to Embedding as 'num_embeddings', second as 'embedding_dim'.
-        # freeze (boolean, optional): If ``True``, the tensor does not get updated in the learning process.
-        # Equivalent to ``embedding.weight.requires_grad = False``. Default: ``True``
-        self.embeddings = nn.Embedding.from_pretrained(embeddings, freeze=not train_word_embeddings)
-        self.model_size = model_size
-        # Applies a linear transformation to the incoming data: :math:`y = xA^T + b`
-        # outputsize=[embedding.size(1), self.model_size]
-
-        self.emb_ff = nn.Linear(embeddings.size(1), self.model_size)
-        self.pos = nn.Linear(max_length, self.model_size)
-        self.max_length = max_length
-        self.transformer = Transformer(self.model_size, self.model_size, self.model_size, num_blocks, num_heads,
-                                       dropout=dropout)
-        # 2: biclass
-        self.output = nn.Linear(self.model_size, 2)
-
-    def forward(self, x):
-        x_size = x.size()
-        x = x.view(-1)
-        x = self.emb_ff(self.embeddings(x))
-        pos = self.pos(get_pos_onehot(self.max_length).to(x)).unsqueeze(0)
-        x = x.view(*(x_size + (self.model_size,)))
-        x += pos
-        x = self.transformer(x)
-        x = x.mean(dim=1)
-        return self.output(x)
-
-try:
-    # try to import tqdm for progress updates
-    from tqdm import tqdm
-except ImportError:
-    # on failure, make tqdm a noop
-    def tqdm(x):
+        x = self.k1convL1(x)
+        x = self.activation(x)
+        x = self.k1convL2(x)
         return x
 
-try:
-    # try to import visdom for visualisation of attention weights
-    import visdom
-    from helpers import plot_weights
 
-    vis = visdom.Visdom()
-except ImportError:
-    vis = None
-    pass
+class EncoderLayer(nn.Module):
+    def __init__(self, d_model, num_heads, conv_hidden_dim, p=0.1):
+        super().__init__()
 
-def val(model, test, vocab, device, epoch_num, path_saving):
-    """
-        Evaluates model on the test set
-    """
-    # model.eval() will notify all your layers that you are in eval mode, that way, batchnorm or dropout layers will
-    # work in eval model instead of training mode.
+        self.mha = MultiHeadAttention(d_model, num_heads, p)  # Self-attetion = Cross-attetion with q=k=v=x
+        self.cnn = CNN(d_model, conv_hidden_dim, p)
 
+        self.layernorm1 = nn.LayerNorm(normalized_shape=d_model, eps=1e-6)
+        self.layernorm2 = nn.LayerNorm(normalized_shape=d_model, eps=1e-6)
+
+    def forward(self, x):
+        # Self attention
+        attn_output, _ = self.mha(x, x, x)  # (batch_size, input_seq_len, d_model)
+
+        # Layer norm after adding the residual connection
+        out1 = self.layernorm1(x + attn_output)  # (batch_size, input_seq_len, d_model)
+
+        # Feed forward
+        cnn_output = self.cnn(out1)  # (batch_size, input_seq_len, d_model)
+
+        # Second layer norm after adding residual connection
+        out2 = self.layernorm2(out1 + cnn_output)  # (batch_size, input_seq_len, d_model)
+
+        return out2
+
+
+def create_sinusoidal_embeddings(nb_p, dim, E):
+    theta = np.array([
+        [p / np.power(10000, 2 * (j // 2) / dim) for j in range(dim)]
+        for p in range(nb_p)
+    ])
+    E[:, 0::2] = torch.FloatTensor(np.sin(theta[:, 0::2]))
+    E[:, 1::2] = torch.FloatTensor(np.cos(theta[:, 1::2]))
+    E.detach_()
+    E.requires_grad = False
+    E = E.to(device)
+
+
+class Embeddings(nn.Module):
+    def __init__(self, d_model, vocab_size, max_position_embeddings, p):
+        super().__init__()
+        self.word_embeddings = nn.Embedding(vocab_size, d_model, padding_idx=1)
+        self.position_embeddings = nn.Embedding(max_position_embeddings, d_model)
+        create_sinusoidal_embeddings(
+            nb_p=max_position_embeddings,
+            dim=d_model,
+            E=self.position_embeddings.weight
+        )
+
+        self.LayerNorm = nn.LayerNorm(d_model, eps=1e-12)
+
+    def forward(self, input_ids):
+        seq_length = input_ids.size(1)
+        position_ids = torch.arange(seq_length, dtype=torch.long, device=input_ids.device)  # (max_seq_length)
+        position_ids = position_ids.unsqueeze(0).expand_as(input_ids)  # (bs, max_seq_length)
+
+        # Get word embeddings for each input id
+        word_embeddings = self.word_embeddings(input_ids)  # (bs, max_seq_length, dim)
+
+        # Get position embeddings for each position id
+        position_embeddings = self.position_embeddings(position_ids)  # (bs, max_seq_length, dim)
+
+        # Add them both
+        embeddings = word_embeddings + position_embeddings  # (bs, max_seq_length, dim)
+
+        # Layer norm
+        embeddings = self.LayerNorm(embeddings)  # (bs, max_seq_length, dim)
+        return embeddings
+
+
+class Encoder(nn.Module):
+    def __init__(self, num_layers, d_model, num_heads, ff_hidden_dim, input_vocab_size,
+                 maximum_position_encoding, p=0.1):
+        super().__init__()
+
+        self.d_model = d_model
+        self.num_layers = num_layers
+
+        self.embedding = Embeddings(d_model, input_vocab_size, maximum_position_encoding, p)
+
+        # We can stick different encoder, one after other, to have a Deep Neural network.
+        self.enc_layers = nn.ModuleList()
+        for _ in range(num_layers):
+            self.enc_layers.append(EncoderLayer(d_model, num_heads, ff_hidden_dim, p))
+
+    def forward(self, x):
+        x = self.embedding(x)  # Transform to (batch_size, input_seq_length, d_model)
+
+        # We feed forward one transformer encoder after other
+        for i in range(self.num_layers):
+            x = self.enc_layers[i](x)
+
+        return x  # (batch_size, input_seq_len, d_model)
+
+import torchtext.data as data
+import torchtext.datasets as datasets
+from torchtext.data import TabularDataset
+
+max_len = 200
+text = data.Field(sequential=True, fix_length=max_len, batch_first=True, lower=True, dtype=torch.long)
+label = data.LabelField(sequential=False, dtype=torch.long)
+datasets.IMDB.download('./')
+ds_train, ds_test = datasets.IMDB.splits(text, label, path='./imdb/aclImdb/')
+print('train : ', len(ds_train))
+print('test : ', len(ds_test))
+print('train.fields :', ds_train.fields)
+
+ds_train, ds_valid = ds_train.split(0.9)
+print('train : ', len(ds_train))
+print('valid : ', len(ds_valid))
+print('test : ', len(ds_test))
+
+num_words = 50_000
+text.build_vocab(ds_train, max_size=num_words)
+label.build_vocab(ds_train)
+vocab = text.vocab
+
+batch_size = 128
+train_loader, valid_loader, test_loader = data.BucketIterator.splits(
+    (ds_train, ds_valid, ds_test), batch_size=batch_size, sort_key=lambda x: len(x.text), repeat=False)
+
+
+class TransformerClassifier(nn.Module):
+    def __init__(self, num_layers, d_model, num_heads, conv_hidden_dim, input_vocab_size, num_answers):
+        super().__init__()
+
+        self.encoder = Encoder(num_layers, d_model, num_heads, conv_hidden_dim, input_vocab_size,
+                               maximum_position_encoding=10000)
+        self.dense = nn.Linear(d_model, num_answers)
+
+    def forward(self, x):
+        x = self.encoder(x)
+
+        x, _ = torch.max(x, dim=1)
+        x = self.dense(x)
+        return x
+
+model = TransformerClassifier(num_layers=1, d_model=32, num_heads=2,
+                         conv_hidden_dim=128, input_vocab_size=50002, num_answers=2)
+model.to(device)
+
+optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+epochs = 15
+t_total = len(train_loader) * epochs
+
+
+def train(train_loader, valid_loader):
+    for epoch in range(epochs):
+        train_iterator, valid_iterator = iter(train_loader), iter(valid_loader)
+        nb_batches_train = len(train_loader)
+        train_acc = 0
+        model.train()
+        losses = 0.0
+
+        for batch in train_iterator:
+            x = batch.text.to(device)
+            y = batch.label.to(device)
+
+            # Perform the forward pass of the model
+            out = model(x)  # ①
+
+            # Get loss
+            loss = f.cross_entropy(out, y)  # ②
+
+            # Clear gradient buffers
+            model.zero_grad()  # ③
+
+            # Calculate gradient
+            loss.backward()  # ④
+            losses += loss.item()
+
+            # Perform training setp
+            optimizer.step()  # ⑤
+
+            train_acc += (out.argmax(1) == y).cpu().numpy().mean()
+
+        print(f"Training loss at epoch {epoch} is {losses / nb_batches_train}")
+        print(f"Training accuracy: {train_acc / nb_batches_train}")
+        print('Evaluating on validation:')
+        evaluate(valid_loader)
+
+
+def evaluate(data_loader):
+    data_iterator = iter(data_loader)
+    nb_batches = len(data_loader)
     model.eval()
-    print("\nValidating..")
-    if not vis is None:
-        visdom_windows = None
-    # impacts the autograd engine and deactivate it. It will reduce memory usage and speed up computations but you
-    # won’t be able to backprop (which you don’t want in an eval script).
-    with torch.no_grad():
-        correct = 0.0
-        total = 0.0
-        for i, b in enumerate(tqdm(test)):
-            if not vis is None and i == 0:
-                visdom_windows = plot_weights(model, visdom_windows, b, vocab, vis)
-            model_out = model(b.review[0].to(device)).to("cpu").numpy()
-            correct += (model_out.argmax(axis=1) == b.sentiment.numpy()).sum()
-            total += b.sentiment.size(0)
-        with open(path_saving + '_val_results', 'a', encoding='utf-8') as file:
-            temp = "epoach:{}, correct:{}%, correct samples/total samples{}/{}".format(epoch_num, correct / total,
-                                                                                       correct, total)
-            file.write(temp + '\n')
-        print(temp)
-    return correct / total
+    acc = 0
+    for batch in data_iterator:
+        x = batch.text.to(device)
+        y = batch.label.to(device)
+
+        out = model(x)
+        acc += (out.argmax(1) == y).cpu().numpy().mean()
+
+    print(f"Test accuracy: {acc / nb_batches}")
+
+train(train_loader, valid_loader)
+evaluate(test_loader)
 
 
-def train(max_length, model_size, epochs, learning_rate, device, num_heads, num_blocks, dropout, train_word_embeddings,
-          batch_size, save_path):
-    """
-        Trains the classifier on the IMDB sentiment dataset
-    """
-    # train: train iterator
-    # test: test iterator
-    # vectors: train data word vector
-    # vocab: train data vocab
-    train, test, vectors, vocab = get_imdb(batch_size, max_length=max_length)
-    # creat the transformer net
-    model = Net(model_size=model_size, embeddings=vectors, max_length=max_length, num_heads=num_heads,
-                num_blocks=num_blocks, dropout=dropout, train_word_embeddings=train_word_embeddings).to(device)
-
-    optimizer = optim.Adam((p for p in model.parameters() if p.requires_grad), lr=learning_rate)
-    criterion = nn.CrossEntropyLoss()
-    best_correct = 0
-    with open(save_path + '_train_results', 'a', encoding='utf-8') as file_re:
-        for i in range(0, epochs + 1):
-            loss_sum = 0.0
-            model.train()
-            # train data has been spited many batch, tadm: print progress bar
-            for j, b in enumerate(iter(tqdm(train))):
-                optimizer.zero_grad()
-                model_out = model(b.review[0].to(device))
-                # calculate loss
-                loss = criterion(model_out, b.sentiment.to(device))
-                loss.backward()
-                optimizer.step()
-                loss_sum += loss.item()
-            print('\n **********************************************')
-            loss_temp = "Epoch: {}, Loss mean: {}\n".format(i, loss_sum / j)
-            file_re.write(loss_temp + '\n')
-            print(loss_temp)
-            # Validate on test-set every epoch
-            if i % 5 == 0:
-                val_correct = val(model, test, vocab, device, i, save_path)
-            if val_correct > best_correct:
-                best_correct = val_correct
-                best_model = model
-    torch.save(best_model, save_path + '_model.pkl')
-
-if __name__ == "__main__":
-    import argparse
-    import time
-
-    ap = argparse.ArgumentParser(description="Train a Transformer network for sentiment analysis")
-    ap.add_argument("--max_length", default=500, type=int, help="Maximum sequence length, sequences longer than this \
-                                                                are truncated")
-    ap.add_argument("--model_size", default=128, type=int, help="Hidden size for all hidden layers of the model")
-    ap.add_argument("--epochs", default=50, type=int, help="Number of epochs to train for")
-    ap.add_argument("--learning_rate", default=0.0001, type=float, dest="learning_rate",
-                    help="Learning rate for optimizer")
-    ap.add_argument("--device", default="cuda:0", dest="device", help="Device to use for training and evaluation \
-                                                                      e.g. (cpu, cuda:0)")
-    ap.add_argument("--num_heads", default=4, type=int, dest="num_heads", help="Number of attention heads in the \
-                                                                               Transformer network")
-    ap.add_argument("--num_blocks", default=1, type=int, dest="num_blocks",
-                    help="Number of blocks in the Transformer network")
-    ap.add_argument("--dropout", default=0.5, type=float, dest="dropout", help="Dropout (not keep_prob, but probability \
-                                                            of ZEROING during training, i.e. keep_prob = 1 - dropout)")
-    ap.add_argument("--train_word_embeddings", type=bool, default=True, dest="train_word_embeddings",
-                    help="Train GloVE word embeddings")
-    ap.add_argument("--batch_size", type=int, default=64, help="Batch size")
-    ap.add_argument("--save_path", default=r"D:\ruin\data\\" +
-                                           time.strftime('%Y-%m-%d-%H-%M-%S', time.localtime(time.time())),
-                    dest="save_path",
-                    help="The path to save the results")
-    args = vars(ap.parse_args())
-
-    train(**args)
+## https://github.com/victor-roris/pytorch-Deep-Learning/blob/9b3bf8a3381186f80dc406e756b0262a010320a2/15-transformer.ipynb

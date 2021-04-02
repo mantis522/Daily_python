@@ -96,6 +96,7 @@ class MultiHeadAttention(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, Q, K, V, attn_mask):
+        print(Q.shape)
         batch_size = Q.size(0)
         # (bs, n_head, n_q_seq, d_head)
         q_s = self.W_Q(Q).view(batch_size, -1, self.n_head, self.d_head).transpose(1, 2)
@@ -340,7 +341,6 @@ class MovieClassification(nn.Module):
 
 """ 영화 분류 데이터셋 """
 
-
 class MovieDataSet(torch.utils.data.Dataset):
     def __init__(self, vocab, infile):
         self.vocab = vocab
@@ -373,6 +373,8 @@ class MovieDataSet(torch.utils.data.Dataset):
 """ movie data collate_fn """
 def movie_collate_fn(inputs):
     labels, enc_inputs, dec_inputs = list(zip(*inputs))
+    ## 위에서 __getitem__ 으로 보낸 것.
+    ## 그래서 dec_inputs가 2로만 고정.
 
     enc_inputs = torch.nn.utils.rnn.pad_sequence(enc_inputs, batch_first=True, padding_value=0)
     dec_inputs = torch.nn.utils.rnn.pad_sequence(dec_inputs, batch_first=True, padding_value=0)
@@ -393,6 +395,7 @@ train_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\naver\rating
 train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=batch_size, shuffle=True, collate_fn=movie_collate_fn)
 test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\naver\ratings_test.json")
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
+
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
