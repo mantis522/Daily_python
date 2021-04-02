@@ -368,7 +368,7 @@ class MovieDataSet(torch.utils.data.Dataset):
         return (torch.tensor(self.labels[item]),
                 torch.tensor(self.sentences[item]),
                 torch.tensor([self.vocab.piece_to_id("[BOS]")]))
-                ## 디코더의 입력은 BOS로 고정
+                ## 디코더의 입력은 [BOS]로 고정
 
 """ movie data collate_fn """
 def movie_collate_fn(inputs):
@@ -376,9 +376,12 @@ def movie_collate_fn(inputs):
 
     enc_inputs = torch.nn.utils.rnn.pad_sequence(enc_inputs, batch_first=True, padding_value=0)
     dec_inputs = torch.nn.utils.rnn.pad_sequence(dec_inputs, batch_first=True, padding_value=0)
+    ## 인코더와 디코더 input의 길이가 같아지도록 짧은 문장에 padding을 추가.
+    ## padding은 Sentencepiece vocab 만들때의 -pad_id=0 옵션으로 지정한 값
 
     batch = [
         torch.stack(labels, dim=0),
+        ## Label은 길이가 1 고정이므로 stack 함수를 이용해 tensor로 만듦.
         enc_inputs,
         dec_inputs,
     ]
@@ -392,28 +395,6 @@ test_dataset = MovieDataSet(vocab, r"D:\ruin\data\transformer_test\naver\ratings
 test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False, collate_fn=movie_collate_fn)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-""" 모델 epoch 평가 """
-def eval_epoch(model, data_loader):
-    matchs = []
-    model.eval()
-
-    n_word_total = 0
-    n_correct_total = 0
-    with tqdm(total=len(data_loader), desc=f"Valid") as pbar:
-        for i, value in enumerate(data_loader):
-            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
-            outputs = model(enc_inputs, dec_inputs)
-            logits = outputs[0]
-            _, indices = logits.max(1)
-
-            match = torch.eq(indices, labels).detach()
-            matchs.extend(match.cpu())
-            accuracy = np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
-
-            pbar.update(1)
-            pbar.set_postfix_str(f"Acc: {accuracy:.3f}")
-    return np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
 
 """ 모델 epoch 학습 """
 def train_epoch(epoch, model, criterion, optimizer, train_loader):
@@ -437,7 +418,27 @@ def train_epoch(epoch, model, criterion, optimizer, train_loader):
             pbar.set_postfix_str(f"Loss: {loss_val:.3f} ({np.mean(losses):.3f})")
     return np.mean(losses)
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+""" 모델 epoch 평가 """
+def eval_epoch(model, data_loader):
+    matchs = []
+    model.eval()
+
+    n_word_total = 0
+    n_correct_total = 0
+    with tqdm(total=len(data_loader), desc=f"Valid") as pbar:
+        for i, value in enumerate(data_loader):
+            labels, enc_inputs, dec_inputs = map(lambda v: v.to(device), value)
+            outputs = model(enc_inputs, dec_inputs)
+            logits = outputs[0]
+            _, indices = logits.max(1)
+
+            match = torch.eq(indices, labels).detach()
+            matchs.extend(match.cpu())
+            accuracy = np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
+
+            pbar.update(1)
+            pbar.set_postfix_str(f"Acc: {accuracy:.3f}")
+    return np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
 
 learning_rate = 5e-5
 n_epoch = 2
