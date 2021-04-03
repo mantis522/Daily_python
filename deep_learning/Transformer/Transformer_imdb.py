@@ -352,8 +352,9 @@ class MovieDataSet(torch.utils.data.Dataset):
                 line_cnt += 1
 
         with open(infile, "r") as f:
-            max_len = 128
+            max_len = 200
             ## 문장이 인코딩 시퀀스보다 길어서 임베딩 out of index 에러가 발생하는 경우엔 maxlen을 통해 문장 길이를 짧게 해줌.
+            ## 다만 너무 짧게 하면 정보 손실로 정확도 X됨.
             for i, line in enumerate(tqdm(f, total=line_cnt, desc=f"Loading {infile}", unit=" lines")):
                 data = json.loads(line)
                 self.labels.append(data["label"])
@@ -445,7 +446,7 @@ def eval_epoch(model, data_loader):
     return np.sum(matchs) / len(matchs) if 0 < len(matchs) else 0
 
 learning_rate = 5e-5
-n_epoch = 2
+n_epoch = 5
 
 model = MovieClassification(n_enc_vocab=len(vocab), n_dec_vocab=len(vocab), d_hidn=256, n_enc_seq=256, n_dec_seq=256,
                  n_head=4, d_head=64, dropout=0.1, d_ff=1024, layer_norm_epsilon=1e-12, n_layer=6, i_pad=0, n_output=2)
