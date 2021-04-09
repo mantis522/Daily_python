@@ -16,7 +16,7 @@ torch.manual_seed(SEED)
 # 하이퍼파라미터
 BATCH_SIZE = 64
 lr = 0.001
-EPOCHS = 3
+EPOCHS = 5
 
 USE_CUDA = torch.cuda.is_available()
 DEVICE = torch.device("cuda" if USE_CUDA else "cpu")
@@ -55,10 +55,6 @@ train_data, val_data = train_data.split(split_ratio=0.8)
 train_iter, val_iter, test_iter = data.BucketIterator.splits(
         (train_data, val_data, test_data), sort=False,batch_size=BATCH_SIZE,
         shuffle=True, repeat=False)
-
-for data in train_iter:
-    print(data.review)
-
 
 class GRU(nn.Module):
     def __init__(self, n_layers, hidden_dim, n_vocab, embed_dim, n_classes, dropout_p=0.2):
