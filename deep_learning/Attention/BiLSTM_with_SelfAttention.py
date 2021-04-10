@@ -51,6 +51,10 @@ class BiLSTMEncoder(nn.Module):
 
         return out
 
+## a = softmax(WS2 x tanh(Ws1 H^T))
+## Ws1은 weight matrix Da X 2u 크기
+## WS2는 r x da 크기
+
 class SelfAttention(nn.Module):
     def __init__(self, lstm_dim, da, r):
         super(SelfAttention, self).__init__()
@@ -58,9 +62,12 @@ class SelfAttention(nn.Module):
         self.da = da
         self.r = r
         self.main = nn.Sequential(
+            ## H는 lstm hidden dim 합이니까 bi-lstm이라 2곱하고
             nn.Linear(lstm_dim * 2, da),
+            ## 앞에오는게 input 뒤에 오는게 output
             nn.Tanh(),
             nn.Linear(da, r)
+            ## WS2는
         )
     def forward(self, out):
         return F.softmax(self.main(out), dim=1)
