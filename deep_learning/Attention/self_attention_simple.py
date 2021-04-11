@@ -13,7 +13,7 @@ from IPython.display import display, HTML
 
 # 필드 정의
 TEXT = data.Field(sequential=True, tokenize=str.split, lower=True, include_lengths=True, batch_first=True)
-LABEL = data.Field(sequential=False, use_vocab=False, is_target=True)
+LABEL = data.Field(sequential=False, use_vocab=False, is_target=True, dtype = torch.float)
 
 train, test = TabularDataset.splits(
         path=r"D:\ruin\data\csv_file\imdb_split", train='train_data.csv', test='test_data.csv', format='csv',
@@ -28,7 +28,7 @@ BATCH_SIZE = 80
 EMBEDDING_DIM = 100
 LSTM_DIM = 128
 VOCAB_SIZE = TEXT.vocab.vectors.size()[0]
-TAG_SIZE = 2
+TAG_SIZE = 1
 DA = 64
 R = 3 ## attention 3층으로?
 
@@ -92,15 +92,29 @@ class SelfAttentionClassifier(nn.Module):
 
 encoder = BiLSTMEncoder(EMBEDDING_DIM, LSTM_DIM, VOCAB_SIZE).to(device)
 classifier = SelfAttentionClassifier(LSTM_DIM, DA, R, TAG_SIZE).to(device)
-loss_function = nn.NLLLoss()
+loss_function = nn.BCEWithLogitsLoss().to(device)
 
 optimizer = torch.optim.Adam(chain(encoder.parameters(), classifier.parameters()), lr=0.001)
 
 train_iter, test_iter = data.Iterator.splits((train, test), batch_sizes=(BATCH_SIZE, BATCH_SIZE), device=device, repeat=False, sort=False)
 
+def binary_accuracy(preds, y):
+    """
+    Returns accuracy per batch, i.e. if you get 8/10 right, this returns 0.8, NOT 8
+    """
+    #round predictions to the closest integer
+    rounded_preds = torch.round(torch.sigmoid(preds))
+    correct = (rounded_preds == y).float() #convert into float for division
+    acc = correct.sum() / len(correct)
+    return acc
+
 losses = []
+all_loss = 0
+all_acc = 0
+
 for epoch in range(10):
     all_loss = 0
+    all_acc = 0
 
     for idx, batch in enumerate(train_iter):
         batch_loss = 0
@@ -111,11 +125,16 @@ for epoch in range(10):
         label_tensor = batch.sentiment
         out = encoder(text_tensor)
         score, attn = classifier(out)
+        score = score.squeeze(1)
         batch_loss = loss_function(score, label_tensor)
+        acc = binary_accuracy(score, label_tensor)
+
         batch_loss.backward()
         optimizer.step()
         all_loss += batch_loss.item()
-    print("epoch", epoch, "\t" , "loss", all_loss)
+        all_acc += acc.item()
+
+    print("epoch", epoch, "\t" , "loss", all_loss / len(train_iter), "acc", all_acc / len(train_iter))
 
 answer = []
 prediction = []
@@ -131,4 +150,3 @@ with torch.no_grad():
 
         prediction += list(pred.cpu().numpy())
         answer += list(label_tensor.cpu().numpy())
-print(classification_report(prediction, answer, target_names=['positive', 'negative']))
