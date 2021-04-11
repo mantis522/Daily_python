@@ -24,13 +24,13 @@ TEXT.build_vocab(train, vectors=glove_vectors, min_freq=1)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-BATCH_SIZE = 100
+BATCH_SIZE = 80
 EMBEDDING_DIM = 100
 LSTM_DIM = 128
 VOCAB_SIZE =TEXT.vocab.vectors.size()[0]
 TAG_SIZE = 2
 DA = 64
-R = 3
+R = 3 ## attention 3층으로?
 
 class BiLSTMEncoder(nn.Module):
     def __init__(self, embedding_dim, lstm_dim, vocab_size):
@@ -79,13 +79,18 @@ class SelfAttentionClassifier(nn.Module):
         self.r = r
         self.attn = SelfAttention(lstm_dim, da, r)
         self.main = nn.Linear(lstm_dim * 6, tagset_size)
+        ## bidirectional 2에 3개 concat 해서 6 곱하는 것
 
     def forward(self, out):
         attention_weight = self.attn(out)
+        ## out = [batch size, seq_len, LSTM_DIM * 2]
+        ## attention_weight = [batch size, seq_len, R]
         m1 = (out * attention_weight[:,:,0].unsqueeze(2)).sum(dim=1)
+        ## m1 = [batch size, LSTM DIM * 2]
         m2 = (out * attention_weight[:,:,1].unsqueeze(2)).sum(dim=1)
         m3 = (out * attention_weight[:,:,2].unsqueeze(2)).sum(dim=1)
         feats = torch.cat([m1, m2, m3], dim=1)
+        ## feat = [batch size, LSTM DIM * 6]
         return F.log_softmax(self.main(feats)), attention_weight
 
 encoder = BiLSTMEncoder(EMBEDDING_DIM, LSTM_DIM, VOCAB_SIZE).to(device)
