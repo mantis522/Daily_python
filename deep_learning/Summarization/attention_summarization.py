@@ -419,5 +419,7 @@ attn_decoder1 = AttnDecoderRNN(hidden_size, output_lang.n_words, dropout_p=0.1).
 
 trainIters(encoder1, attn_decoder1, 175000, print_every=5000)
 
-evaluateRandomly(encoder1, attn_decoder1)
+torch.save(encoder1.state_dict(), 'D:/ruin/data/model/enc.w')
+torch.save(attn_decoder1.state_dict(), 'D:/ruin/data/model/att.w')
 
+evaluateRandomly(encoder1, attn_decoder1)
