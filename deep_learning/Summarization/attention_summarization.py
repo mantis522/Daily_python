@@ -1,8 +1,18 @@
 import numpy as np
 import pandas as pd
 import contractions
-import re
 from nltk.corpus import stopwords
+import time
+import math
+import re
+import random
+import torch
+import torch.nn as nn
+from torch import optim
+import torch.nn.functional as F
+import matplotlib.pyplot as plt
+plt.switch_backend('agg')
+import matplotlib.ticker as ticker
 
 data_path = r"D:\ruin\data\summarization\news_summary\news_summary_more.csv"
 glove_path = r"D:\ruin\data\glove.6B\glove.6B.200d.txt"
@@ -56,9 +66,6 @@ contraction_mapping = {"ain't": "is not", "aren't": "are not","can't": "cannot",
 
                            "you're": "you are", "you've": "you have"}
 
-import re
-from nltk.corpus import stopwords
-
 stop_words = stopwords.words('english')
 
 def preprocess(text):
@@ -86,18 +93,6 @@ data['text'] = data['text'].apply(lambda x:preprocess(x))
 
 x = data['text']
 y = data['headlines']
-print(x[50],y[50],sep='\n')
-
-from io import open
-import unicodedata
-import string
-import re
-import random
-
-import torch
-import torch.nn as nn
-from torch import optim
-import torch.nn.functional as F
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -301,9 +296,6 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
 
     return loss.item() / target_length
 
-import time
-import math
-
 
 def asMinutes(s):
     m = math.floor(s / 60)
@@ -318,9 +310,7 @@ def timeSince(since, percent):
     rs = es - s
     return '%s (- %s)' % (asMinutes(s), asMinutes(rs))
 
-import matplotlib.pyplot as plt
-plt.switch_backend('agg')
-import matplotlib.ticker as ticker
+
 
 def showPlot(points):
     plt.figure()
