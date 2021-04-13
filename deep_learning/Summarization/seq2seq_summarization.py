@@ -138,6 +138,8 @@ TRG = Field(tokenize = tokenize_en,
 
 news_data = News_Dataset(path=r"D:\ruin\data\summarization\BBC News Summary", fields=[SRC,TRG])
 
+
+
 train_data, valid_data, test_data = news_data.split(split_ratio=[0.8,0.1,0.1], random_state=random.seed(21))
 
 print(f"Number of training examples: {len(train_data.examples)}")
