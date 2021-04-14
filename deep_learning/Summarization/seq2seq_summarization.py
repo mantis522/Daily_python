@@ -268,7 +268,6 @@ class Seq2Seq(nn.Module):
         # trg = [trg len, batch size] same for trg_len
         # teacher_forcing_ratio is probability to use teacher forcing
         # e.g. if teacher_forcing_ratio is 0.75 we use ground-truth inputs 75% of the time
-
         batch_size = trg.shape[1]
         trg_len = trg.shape[0]
         trg_vocab_size = self.decoder.output_dim  # we don't have trg.shape[-1] here
@@ -281,6 +280,7 @@ class Seq2Seq(nn.Module):
 
         # first input to the decoder is the <sos> tokens
         dec_input = trg[0, :]
+        # dec_input = [batch_size]
 
         for t in range(1, trg_len):
             # insert input token embedding, previous hidden and previous cell states
