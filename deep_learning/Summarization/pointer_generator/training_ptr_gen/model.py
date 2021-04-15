@@ -39,6 +39,7 @@ def init_wt_normal(wt):
 def init_wt_unif(wt):
     wt.data.uniform_(-config.rand_unif_init_mag, config.rand_unif_init_mag)
 
+## 평범한 seq2seq 인코더 클래스
 class Encoder(nn.Module):
     def __init__(self):
         super(Encoder, self).__init__()
@@ -114,6 +115,7 @@ class Attention(nn.Module):
         attn_dist = attn_dist_ / normalization_factor
 
         attn_dist = attn_dist.unsqueeze(1)  # B x 1 x t_k
+        ## c_t는 context vector
         c_t = torch.bmm(attn_dist, encoder_outputs)  # B x 1 x n
         c_t = c_t.view(-1, config.hidden_dim * 2)  # B x 2*hidden_dim
 
@@ -159,11 +161,15 @@ class Decoder(nn.Module):
 
         y_t_1_embd = self.embedding(y_t_1)
         x = self.x_context(torch.cat((c_t_1, y_t_1_embd), 1))
+        ## x는 decoder input
         lstm_out, s_t = self.lstm(x.unsqueeze(1), s_t_1)
 
+        ## s_t는 decoder state
         h_decoder, c_decoder = s_t
         s_t_hat = torch.cat((h_decoder.view(-1, config.hidden_dim),
                              c_decoder.view(-1, config.hidden_dim)), 1)  # B x 2*hidden_dim
+
+        ## c_t는 context vector
         c_t, attn_dist, coverage_next = self.attention_network(s_t_hat, encoder_outputs, encoder_feature,
                                                           enc_padding_mask, coverage)
 
@@ -184,6 +190,7 @@ class Decoder(nn.Module):
         output = self.out2(output) # B x vocab_size
         vocab_dist = F.softmax(output, dim=1)
 
+        # 이 아래는 P(w) 구하는 것.
         if config.pointer_gen:
             vocab_dist_ = p_gen * vocab_dist
             attn_dist_ = (1 - p_gen) * attn_dist
