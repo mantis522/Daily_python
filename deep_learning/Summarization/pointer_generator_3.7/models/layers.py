@@ -85,11 +85,14 @@ class Decoder(BasicModule):
 
         y_t_embd = self.tgt_word_emb(y_t)
         x = self.con_fc(torch.cat((c_t, y_t_embd), 1))
+        ## x는 decoder input
         lstm_out, s_t = self.lstm(x.unsqueeze(1), s_t)
 
+        ## s_t는 decoder state
         dec_h, dec_c = s_t
         s_t_hat = torch.cat((dec_h.view(-1, config.hidden_dim),
                              dec_c.view(-1, config.hidden_dim)), 1)     # B x 2*hidden_dim
+        ## c_t는 context vector
         c_t, attn_dist, coverage_next = self.attention_network(s_t_hat, enc_out, enc_fea,
                                                                enc_padding_mask, coverage)
 
@@ -109,6 +112,7 @@ class Decoder(BasicModule):
         output = self.fc2(output)  # B x vocab_size
         vocab_dist = F.softmax(output, dim=1)
 
+        # 이 아래는 P(w) 구하는 것.
         if config.pointer_gen:
             vocab_dist_ = p_gen * vocab_dist
             attn_dist_ = (1 - p_gen) * attn_dist
@@ -119,5 +123,13 @@ class Decoder(BasicModule):
             final_dist = vocab_dist_.scatter_add(1, enc_batch_extend_vocab, attn_dist_)
         else:
             final_dist = vocab_dist
+
+        ## final_dist = P(w)를 의미
+        ## 아래 리턴값에서 각각 결과는
+        ## final_dist = P(w)
+        ## s_t = decoder state
+        ## c_t = context vector
+        ## attn_dist = attention distribution
+        ## 그 외는 이름 그대로
 
         return final_dist, s_t, c_t, attn_dist, p_gen, coverage

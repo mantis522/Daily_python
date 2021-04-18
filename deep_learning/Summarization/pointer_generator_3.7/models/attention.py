@@ -22,6 +22,7 @@ class Attention(BasicModule):
 
     def forward(self, s_t, enc_out, enc_fea, enc_padding_mask, coverage):
         b, l, n = list(enc_out.size())
+        ## l이 v^T
 
         dec_fea = self.dec_fc(s_t)  # B x 2*hidden_dim
         dec_fea_expanded = dec_fea.unsqueeze(1).expand(b, l, n).contiguous()  # B x l x 2*hidden_dim
@@ -42,6 +43,7 @@ class Attention(BasicModule):
         attn_dist = attn_dist_ / normalization_factor
 
         attn_dist = attn_dist.unsqueeze(1)                        # B x 1 x l
+        ## c_t는 context vector
         c_t = torch.bmm(attn_dist, enc_out)                       # B x 1 x n
         c_t = c_t.view(-1, config.hidden_dim * 2)                 # B x 2*hidden_dim
 
