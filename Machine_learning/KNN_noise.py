@@ -29,6 +29,22 @@ def select_train_data(x_data):
 
     return true_data, true_y_data, false_data, false_y_data
 
+def making_noise():
+    true_noise_data = []
+    true_noise_y_data = []
+    false_noise_data = []
+    false_noise_y_data = []
+    for a in range(30):
+        random_number = rangeNum()
+        if random_number < 0.5:
+            false_noise_data.append(random_number)
+            false_noise_y_data.append(rangeNum())
+        else:
+            true_noise_data.append(random_number)
+            true_noise_y_data.append(rangeNum())
+
+    return true_noise_data[:1], true_noise_y_data[:1], false_noise_data[:1], false_noise_y_data[:1]
+
 def making_label(data):
     x_label = []
     for a in range(len(data)):
@@ -36,6 +52,16 @@ def making_label(data):
             x_label.append(1)
         else:
             x_label.append(0)
+
+    return x_label
+
+def making_noise_label(data):
+    x_label = []
+    for a in range(len(data)):
+        if data[a] < 0.5:
+            x_label.append(0)
+        else:
+            x_label.append(1)
 
     return x_label
 
@@ -85,14 +111,23 @@ def cal_accuracy():
         x_data, y_data = making_data(30)
         test_data, test_y_data = making_data(100)
         true_data, true_y_data, false_data, false_y_data = select_train_data(x_data)
+        true_noise_data, true_noise_y_data, false_noise_data, false_noise_y_data = making_noise()
         true_label = making_label(true_data)
         false_label = making_label(false_data)
+        true_noise_label = making_noise_label(true_noise_data)
+        false_noise_label = making_noise_label(false_noise_data)
         test_label = making_label(test_data)
         true_train_data = np.array(merge_list(true_data, true_y_data))
         false_train_data = np.array(merge_list(false_data, false_y_data))
         test_data = np.array(merge_list(test_data, test_y_data))
-        train_data, train_label = slice_data(10, true_train_data, false_train_data, true_label, false_label)
-        knn_accuracy = accuracy(train_data, train_label, test_data, test_label, 1)
+        true_noise_data = np.array(merge_list(true_noise_data, true_noise_y_data))
+        false_noise_data = np.array(merge_list(false_noise_data, false_noise_y_data))
+        train_data, train_label = slice_data(9, true_train_data, false_train_data, true_label, false_label)
+        concat_train_data = np.concatenate((train_data, true_noise_data), axis=0)
+        concat_train_data = np.concatenate((concat_train_data, false_noise_data), axis=0)
+        concat_train_label = train_label + true_noise_label
+        concat_train_label = concat_train_label + false_noise_label
+        knn_accuracy = accuracy(concat_train_data, concat_train_label, test_data, test_label, 3)
         sum.append(knn_accuracy)
 
     mean = np.mean(sum)
