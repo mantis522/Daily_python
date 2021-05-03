@@ -1,16 +1,13 @@
 # -*- coding: utf-8 -*-
 
 from __future__ import unicode_literals, print_function, division
-
 import os
 import time
 import argparse
 import tensorflow as tf
-
 import torch
 import torch.optim as optim
 from torch.nn.utils import clip_grad_norm_
-
 from models.model import Model
 from utils import config
 from dataset import Vocab

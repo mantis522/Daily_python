@@ -38,7 +38,8 @@ trunc_norm_init_std=1e-4
 eps = 1e-12
 use_gpu=True
 lr_coverage=0.15
-max_iterations = 500000
+max_iterations = 5000
+## 이 파라미터에 따라 학습 정도 변화
 
 # transformer
 d_k = 64
