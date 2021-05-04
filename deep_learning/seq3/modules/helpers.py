@@ -1,7 +1,7 @@
 import torch
 from numpy import mean
 from torch.nn import functional as F
-from torch.nn.functional import _gumbel_softmax_sample
+from torch.nn.functional import gumbel_softmax
 
 
 def sequence_mask(lengths, max_len=None):
@@ -95,7 +95,7 @@ def gumbel_softmax(logits, tau=1, hard=False, eps=1e-10, target_mask=None):
     """
     shape = logits.size()
     assert len(shape) == 2
-    y_soft = _gumbel_softmax_sample(logits, tau=tau, eps=eps)
+    y_soft = gumbel_softmax(logits, tau=tau, eps=eps)
 
     if target_mask is not None:
         y_soft = y_soft * target_mask.float()
