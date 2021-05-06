@@ -3,7 +3,7 @@ import os
 import torch
 
 print("torch:", torch.__version__)
-print("Cuda:", torch.backends.cudnn.cuda)
+# print("Cuda:", torch.backends.cudnn.cuda)
 print("CuDNN:", torch.backends.cudnn.version())
 
 CPU_CORES = 4

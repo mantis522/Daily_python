@@ -4,7 +4,6 @@ import os
 import random
 from collections import Counter, defaultdict
 from matplotlib import pyplot as plt
-
 import numpy
 from glob2 import glob
 from sklearn.model_selection import train_test_split
