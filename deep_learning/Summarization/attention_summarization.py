@@ -14,6 +14,8 @@ import matplotlib.pyplot as plt
 plt.switch_backend('agg')
 import matplotlib.ticker as ticker
 
+## 매 라인마다 주석 적을 것.
+
 data_path = r"D:\ruin\data\summarization\news_summary\news_summary_more.csv"
 glove_path = r"D:\ruin\data\glove.6B\glove.6B.200d.txt"
 
@@ -65,6 +67,7 @@ contraction_mapping = {"ain't": "is not", "aren't": "are not","can't": "cannot",
                            "you'd": "you would", "you'd've": "you would have", "you'll": "you will", "you'll've": "you will have",
 
                            "you're": "you are", "you've": "you have"}
+## contraction에 대해서는 라이브러리 사용할 것.
 
 stop_words = stopwords.words('english')
 
