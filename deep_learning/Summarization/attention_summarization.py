@@ -20,7 +20,6 @@ data_path = r"D:\ruin\data\summarization\news_summary\news_summary_more.csv"
 glove_path = r"D:\ruin\data\glove.6B\glove.6B.200d.txt"
 
 data = pd.read_csv(data_path,encoding='utf-8')
-print(data.head())
 
 contraction_mapping = {"ain't": "is not", "aren't": "are not","can't": "cannot", "'cause": "because", "could've": "could have", "couldn't": "could not",
 
@@ -130,12 +129,12 @@ def readLangs(text, summary, reverse=False):
 
     # Split every line into pairs and normalize
     pairs = [[text[i], summary[i]] for i in range(len(text))]
-
     # Reverse pairs, make Lang instances
     if reverse:
         pairs = [list(reversed(p)) for p in pairs]
         input_lang = Lang(summary)
         output_lang = Lang(text)
+
     else:
         input_lang = Lang(text)
         output_lang = Lang(summary)
@@ -154,8 +153,7 @@ def prepareData(lang1, lang2, reverse=False):
     print(output_lang.name, output_lang.n_words)
     return input_lang, output_lang, pairs
 
-input_lang, output_lang, pairs = prepareData( x, y , False)
-print(random.choice(pairs))
+input_lang, output_lang, pairs = prepareData(x, y , False)
 
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size):
@@ -166,9 +164,14 @@ class EncoderRNN(nn.Module):
         self.gru = nn.GRU(hidden_size, hidden_size)
 
     def forward(self, input, hidden):
+        ## input : [1]
         embedded = self.embedding(input).view(1, 1, -1)
+        ## embedded : [1, 1, hidden size]
         output = embedded
         output, hidden = self.gru(output, hidden)
+        ## output : [1, 1, hidden size]
+        ## hidden : [1, 1, hidden size]
+
         return output, hidden
 
     def initHidden(self):
@@ -206,23 +209,38 @@ class AttnDecoderRNN(nn.Module):
 
         self.embedding = nn.Embedding(self.output_size, self.hidden_size)
         self.attn = nn.Linear(self.hidden_size * 2, self.max_length)
+        ## attn은 hidden size에서 지정한 크기로 수렴시킴.
+        ## 이진분류 같은 경우는 1로 수렴.
+        ## 왜 히든 사이즈를 2배로 하는지는 모르겠네
         self.attn_combine = nn.Linear(self.hidden_size * 2, self.hidden_size)
+        ## 어텐션 컴바인은 뭐지?
         self.dropout = nn.Dropout(self.dropout_p)
         self.gru = nn.GRU(self.hidden_size, self.hidden_size)
         self.out = nn.Linear(self.hidden_size, self.output_size)
 
     def forward(self, input, hidden, encoder_outputs):
         embedded = self.embedding(input).view(1, 1, -1)
+        ## 임베딩 값
         embedded = self.dropout(embedded)
-
+        ## 드랍아웃
         attn_weights = F.softmax(
             self.attn(torch.cat((embedded[0], hidden[0]), 1)), dim=1)
+        ## attention distribution 구함
+        ## attention distribution의 각각의 값은 attn_weight(어텐션 가중치)라고 한다.
+        ## embedded[0] = [1, 300]
+        ## hidden[0] = [1, 300]
+        ## attn_weights = [1, 90]
         attn_applied = torch.bmm(attn_weights.unsqueeze(0),
                                  encoder_outputs.unsqueeze(0))
-
+        ## 인코더의 어텐션 가중치와 은닉 상태를 가중합해서 Attention value를 구함.
+        ## atten_weights.unsqueeze(0) = torch.Size([1, 1, 90])
+        ## encoder_outputs.unsqueeze(0) = torch.Size([1, 90, 300])
+        ## attn_applied = torch.Size([1, 1, 300])
+        ## attn_applied[0] = [1, 300]
         output = torch.cat((embedded[0], attn_applied[0]), 1)
+        ## 컨텍스트 벡터와 임베딩된 단어를 concat 하여 현재 시점의 새로운 입력으로 사용
         output = self.attn_combine(output).unsqueeze(0)
-
+        ## output = torch.Size([1, 1, 300])
         output = F.relu(output)
         output, hidden = self.gru(output, hidden)
 
@@ -250,6 +268,7 @@ def tensorsFromPair(pair):
 teacher_forcing_ratio = 0.5
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
     encoder_hidden = encoder.initHidden()
+    ## encoder class에서 initHidden()으로 초기화 한 것.
 
     encoder_optimizer.zero_grad()
     decoder_optimizer.zero_grad()
