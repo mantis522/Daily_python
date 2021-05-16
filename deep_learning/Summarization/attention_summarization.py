@@ -245,6 +245,7 @@ class AttnDecoderRNN(nn.Module):
         output, hidden = self.gru(output, hidden)
 
         output = F.log_softmax(self.out(output[0]), dim=1)
+        ## softmax 함수 결과에 로그 씌운거.
         return output, hidden, attn_weights
 
     def initHidden(self):
@@ -266,6 +267,8 @@ def tensorsFromPair(pair):
     return (input_tensor, target_tensor)
 
 teacher_forcing_ratio = 0.5
+
+## train 함수는 loss 계산을 위해 쓰임.
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, max_length=MAX_LENGTH):
     encoder_hidden = encoder.initHidden()
     ## encoder class에서 initHidden()으로 초기화 한 것.
@@ -277,7 +280,6 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
     target_length = target_tensor.size(0)
 
     encoder_outputs = torch.zeros(max_length, encoder.hidden_size, device=device)
-
     loss = 0
 
     for ei in range(input_length):
@@ -351,8 +353,9 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
 
     encoder_optimizer = optim.SGD(encoder.parameters(), lr=learning_rate)
     decoder_optimizer = optim.SGD(decoder.parameters(), lr=learning_rate)
-    training_pairs = [tensorsFromPair(random.choice(pairs))
-                      for i in range(n_iters)]
+    training_pairs = [tensorsFromPair(random.choice(pairs)) for i in range(n_iters)]
+    ## training_pairs 크기는 175,000
+
     criterion = nn.NLLLoss()
 
     for iter in range(1, n_iters + 1):
@@ -361,7 +364,6 @@ def trainIters(encoder, decoder, n_iters, print_every=1000, plot_every=100, lear
         training_pair = training_pairs[iter - 1]
         input_tensor = training_pair[0]
         target_tensor = training_pair[1]
-
         loss = train(input_tensor, target_tensor, encoder,
                      decoder, encoder_optimizer, decoder_optimizer, criterion)
         print_loss_total += loss
