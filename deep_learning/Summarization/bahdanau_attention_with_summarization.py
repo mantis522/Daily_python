@@ -155,6 +155,7 @@ def prepareData(lang1, lang2, reverse=False):
 
 input_lang, output_lang, pairs = prepareData(x, y , False)
 
+
 class EncoderRNN(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(EncoderRNN, self).__init__()
@@ -421,10 +422,12 @@ def evaluateRandomly(encoder, decoder, n=10):
     for i in range(n):
         pair = random.choice(pairs)
         print('>', pair[0])
+        ## pair[0] = 원래 문장
         print('=', pair[1])
+        ## pair[1] = 요약된 문장
         output_words, attentions = evaluate(encoder, decoder, pair[0])
         output_sentence = ' '.join(output_words)
-        print('<', output_sentence)
+        print('output sentence : ', output_sentence)
         print('')
 
 hidden_size = 300
