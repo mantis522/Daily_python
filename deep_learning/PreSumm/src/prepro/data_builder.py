@@ -11,7 +11,7 @@ from collections import Counter
 from os.path import join as pjoin
 
 import torch
-from multiprocess import Pool
+from multiprocessing import Pool
 
 from others.logging import logger
 from others.tokenization import BertTokenizer
@@ -283,6 +283,7 @@ def format_to_bert(args):
             real_name = json_f.split('/')[-1]
             a_lst.append((corpus_type, json_f, args, pjoin(args.save_path, real_name.replace('json', 'bert.pt'))))
         print(a_lst)
+
         pool = Pool(args.n_cpus)
         for d in pool.imap(_format_to_bert, a_lst):
             pass
