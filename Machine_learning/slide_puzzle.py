@@ -1,7 +1,6 @@
 import pygame, sys, random
 from pygame.locals import *
 
-# Create the constants (go ahead and experiment with different values)
 BOARDSIZE = 4
 TILESIZE = 80
 WINDOWWIDTH = 640
