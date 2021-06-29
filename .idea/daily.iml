@@ -2,12 +2,6 @@
 <module type="PYTHON_MODULE" version="4">
   <component name="NewModuleRootManager">
     <content url="file://$MODULE_DIR$">
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm/src" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm/src/models" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm/src/others" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm/src/translate" isTestSource="false" />
-      <sourceFolder url="file://$MODULE_DIR$/deep_learning/PreSumm/src/prepro" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.7 (torch)" jdkType="Python SDK" />
