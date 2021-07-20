@@ -15,16 +15,12 @@ def floodfill(image, xy, value, border=None, thresh=0):
 
     pixel = image.load()
     x, y = xy
-    try:
-        background = pixel[x, y]
-        if _color_diff(value, background) <= thresh:
-            return  # seed point already has fill color
-        pixel[x, y] = value
-    except (ValueError, IndexError):
-        return  # seed point outside image
+    background = pixel[x, y]
+    if _color_diff(value, background) <= thresh:
+        return  # seed point already has fill color
+    pixel[x, y] = value
     edge = {(x, y)}
-    # use a set to keep record of current and previous edge pixels
-    # to reduce memory consumption
+
     full_edge = set()
     while edge:
         new_edge = set()
@@ -57,6 +53,6 @@ def _color_diff(color1, color2):
     else:
         return abs(color1 - color2)
 
-floodfill(image, P[0], color(0)) # darkblue
+floodfill(image, P[0], color(2)) # darkblue
 
 image.save("a.png")
