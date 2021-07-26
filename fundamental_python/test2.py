@@ -1,58 +1,82 @@
-from reportlib import search, graph, color
+# import networkx as nx
+from pulp import *
 from PIL import Image, ImageDraw
+from collections import Mapping, Set
 
-## https://pillow.readthedocs.io/en/stable/_modules/PIL/ImageDraw.html#floodfill
+im = Image.open("japan.png")
 
-# region i is of color k
-def var(i, k):
-  return i * 4 + k
+def product(*args, repeat=1):
+    # product('ABCD', 'xy') --> Ax Ay Bx By Cx Cy Dx Dy
+    # product(range(2), repeat=3) --> 000 001 010 011 100 101 110 111
+    pools = [tuple(pool) for pool in args] * repeat
+    result = [[]]
+    for pool in pools:
+        result = [x+[y] for x in result for y in pool]
+    for prod in result:
+        yield tuple(prod)
 
-image = Image.open("kadai1/japan.png")
+def Counter(word):
+    counter = {}
+    for letter in word:
+        if letter not in counter:
+            counter[letter] = 0
+        counter[letter] += 1
+    return counter
 
-(P, E) = graph(image)
-
-def floodfill(image, xy, value, border=None, thresh=0):
-
-    pixel = image.load()
-    x, y = xy
-    background = pixel[x, y]
-    if _color_diff(value, background) <= thresh:
-        return  # seed point already has fill color
-    pixel[x, y] = value
-    edge = {(x, y)}
-
-    full_edge = set()
-    while edge:
-        new_edge = set()
-        for (x, y) in edge:  # 4 adjacent method
-            for (s, t) in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
-                # If already processed, or if a coordinate is negative, skip
-                if (s, t) in full_edge or s < 0 or t < 0:
-                    continue
-                try:
-                    p = pixel[s, t]
-                except (ValueError, IndexError):
-                    pass
-                else:
-                    full_edge.add((s, t))
-                    if border is None:
-                        fill = _color_diff(p, background) <= thresh
-                    else:
-                        fill = p != value and p != border
-                    if fill:
-                        pixel[s, t] = value
-                        new_edge.add((s, t))
-        full_edge = edge  # discard pixels processed
-        edge = new_edge
+cc = sorted([(v, k) for k, v in Counter(im.getdata()).items()])[-1][1]
 
 
-def _color_diff(color1, color2):
+for y, x in product(range(im.height), range(im.width)):
+    R, G, B = im.getpixel((x, y))[:3]
+    if (R, G) == (0, 1):
+        im.putpixel(0, 0, B)
 
-    if isinstance(color2, tuple):
-        return sum([abs(color1[i] - color2[i]) for i in range(0, len(color2))])
-    else:
-        return abs(color1 - color2)
+n = 0
+for y, x in product(range(im.height), range(im.width)):
+    if im.getpixel((x, y)) != cc:
+        continue
+    ImageDraw.floodfill(im, (x, y), (0, 1, n))
+    n += 1
 
-floodfill(image, P[0], color(2)) # darkblue
+dd = [(-1, 0), (0, -1), (0, 1), (1, 0)]
+for h in range(1):
+    l = list(product(range(1, im.height-1), range(1, im.width-1)))
+    for y, x in l:
+        c = im.getpixel((x, y))
+        if c[:2] == (0, 1):
+            for i, j in dd:
+                if im.getpixel((x+i, y+j))[:2] != (0, 1):
+                    im.putpixel((x+i, y+j), c)
 
-image.save("a.png")
+def add_edge(E, x, y):
+  if x != y and not (x, y) in E and not (y, x) in E:
+    E.append((x,y))
+
+def graph(image):
+  (w, h) = image.size
+  V = []
+  E = []
+  P = {}
+  M = []
+  for y in range(0, h):
+    L = []
+    for x in range(0, w):
+      c = image.getpixel((x, y))
+      if c != (0, 0, 0) and not c in P:
+        P[c] = len(V)
+        V.append((x, y))
+      if c == (0, 0, 0):
+        L.append(None)
+      else:
+        L.append(P[c])
+    M.append(L)
+  for y in range(0, h):
+    for x in range(0, w):
+      u = M[y][x]
+      if u != None:
+        for (x2, y2) in [(x + 3, y), (x, y + 3)]:
+          if x2 < w and y2 < h:
+            v = M[y2][x2]
+            if v != None:
+              add_edge(E, u, v)
+  return (V, E)

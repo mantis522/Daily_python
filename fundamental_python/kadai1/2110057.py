@@ -132,7 +132,7 @@ for a in pixel_list:
 
 sea_colors = [(0, 15, 93)]
 
-## reportライブラリーの「color」を使えば、下のall_colorsリストを使わなくてもいいが、report-4.pdfにはライブラリーのファイル名が「report.py」と書かれていて、講義資料があるウェブサイトにはライブラリーのファイル名が「reportlib.py」なのでエラーが出る場合に備え、以下のようにリストを作成しました。
+## reportライブラリーの「color」を使えば、下のall_colorsリストを使わなくてもいいが、report-4.pdfにはライブラリーのファイル名が「report.py」ですが、講義資料があるウェブサイトにはライブラリーのファイル名が「reportlib.py」なのでエラーが出る場合に備え、以下のようにリストを作成しました。
 ## reportライブラリーの「color」を使用するコードは154,155ラインに注釈処理をしておきました。
 
 all_colors = [(193, 239, 66), (142, 72, 85), (213, 76, 107), (61, 241, 73), (191, 64, 15), (183, 182, 36),
@@ -158,4 +158,4 @@ for a in range(len(P)):
     map_coloring(image, P[a], all_colors[a])
 
 map_coloring(image, P[0], sea_colors[0])
-image.save("b.png")
+image.save("a.png")
