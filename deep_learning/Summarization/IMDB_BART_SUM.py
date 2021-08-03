@@ -16,7 +16,7 @@ test = df_imdb['text'][49999]
 
 print(df_imdb)
 
-summary_text = summarizer(test, max_length=100, min_length=5, do_sample=False)[0]['summary_text']
+summary_text = summarizer(test, max_length=380, min_length=5, do_sample=False)[0]['summary_text']
 
 print("original text : ", test)
 
